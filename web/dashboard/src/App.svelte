@@ -1,4 +1,6 @@
 <script>
+  import AccountsPage from './lib/AccountsPage.svelte';
+
   let activeRoute = $state('Dashboard');
   let isMobileMenuOpen = $state(false);
 
@@ -103,17 +105,21 @@
     <!-- Page Content -->
     <div class="flex-1 overflow-auto p-4 lg:p-8">
       <div class="max-w-6xl mx-auto">
-        <!-- Placeholder content based on route -->
-        <div class="rounded-xl border border-border bg-bg-sidebar/50 backdrop-blur-sm p-8 min-h-[400px] flex flex-col items-center justify-center text-center">
-          <div class="w-16 h-16 rounded-2xl bg-accent/20 text-accent flex items-center justify-center mb-6">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-            {@html navItems.find(i => i.name === activeRoute)?.icon}
+        {#if activeRoute === 'Accounts'}
+          <AccountsPage />
+        {:else}
+          <!-- Placeholder content based on route -->
+          <div class="rounded-xl border border-border bg-bg-sidebar/50 backdrop-blur-sm p-8 min-h-[400px] flex flex-col items-center justify-center text-center">
+            <div class="w-16 h-16 rounded-2xl bg-accent/20 text-accent flex items-center justify-center mb-6">
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+              {@html navItems.find(i => i.name === activeRoute)?.icon}
+            </div>
+            <h2 class="text-2xl font-semibold text-white mb-2">{activeRoute} Overview</h2>
+            <p class="text-text-muted max-w-md">
+              This is the placeholder content for the {activeRoute} page. The actual implementation will be added in upcoming tasks.
+            </p>
           </div>
-          <h2 class="text-2xl font-semibold text-white mb-2">{activeRoute} Overview</h2>
-          <p class="text-text-muted max-w-md">
-            This is the placeholder content for the {activeRoute} page. The actual implementation will be added in upcoming tasks.
-          </p>
-        </div>
+        {/if}
       </div>
     </div>
   </main>
