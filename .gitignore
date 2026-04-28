@@ -1,6 +1,6 @@
 # Binary
-aegis.exe
-aegis
+/aegis.exe
+/aegis
 
 # Config & data (contains secrets)
 config.json
