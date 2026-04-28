@@ -26,5 +26,9 @@ auth/.venv/
 # Sisyphus work state
 .sisyphus/
 
+# Cookies (runtime data, contains secrets)
+cookies/*
+!cookies/.gitkeep
+
 # Reference images
 dashboard-reference.png
