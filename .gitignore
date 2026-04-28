@@ -1,0 +1,30 @@
+# Binary
+aegis.exe
+aegis
+
+# Config & data (contains secrets)
+config.json
+*.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+auth/.venv/
+
+# Playwright MCP
+.playwright-mcp/
+
+# Sisyphus work state
+.sisyphus/
+
+# Reference images
+dashboard-reference.png
