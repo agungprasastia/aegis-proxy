@@ -1,20 +1,39 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-base: #0f0f1e;
-  --color-bg-sidebar: #1a1a2e;
-  --color-text-base: #e0e0e0;
-  --color-text-muted: #a0a0b0;
-  --color-accent: #667eea;
-  --color-accent-hover: #7a8ef0;
-  --color-sidebar-hover: #23233a;
-  --color-sidebar-active: #2a2a46;
-  --color-border: #2a2a40;
+  --color-bg-base: var(--bg-base);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-text-base: var(--text-base);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-border: var(--border);
 }
 
 :root {
-  background-color: var(--color-bg-base);
-  color: var(--color-text-base);
+  --bg-base: #0d1117;
+  --bg-sidebar: #161b22;
+  --text-base: #e6edf3;
+  --text-muted: #7d8590;
+  --accent: #667eea;
+  --accent-hover: #768bf0;
+  --sidebar-hover: #21262d;
+  --sidebar-active: #238636;
+  --border: #30363d;
+}
+
+:root[data-theme="light"] {
+  --bg-base: #ffffff;
+  --bg-sidebar: #f6f8fa;
+  --text-base: #1f2328;
+  --text-muted: #656d76;
+  --accent: #667eea;
+  --accent-hover: #768bf0;
+  --sidebar-hover: #eaeef2;
+  --sidebar-active: #d0d7de;
+  --border: #d0d7de;
 }
 
 html, body, #app {
@@ -27,4 +46,6 @@ body {
   font-family: ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--bg-base);
+  color: var(--text-base);
 }
