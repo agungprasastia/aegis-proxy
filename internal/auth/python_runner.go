@@ -4,7 +4,10 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -52,10 +55,48 @@ type ResultEvent struct {
 	YepAPI    map[string]interface{} `json:"yepapi"`
 }
 
+// findAuthDir locates the auth directory with login.py
+func findAuthDir() string {
+	exePath, _ := os.Executable()
+	exeDir := filepath.Dir(exePath)
+	homeDir, _ := os.UserHomeDir()
+
+	candidates := []string{
+		filepath.Join(".", "auth"),
+		filepath.Join(exeDir, "auth"),
+		filepath.Join(exeDir, "..", "auth"),
+		filepath.Join(homeDir, ".aegis-proxy", "auth"),
+	}
+
+	for _, dir := range candidates {
+		if _, err := os.Stat(filepath.Join(dir, "login.py")); err == nil {
+			return dir
+		}
+	}
+	return "auth" // fallback
+}
+
+// findVenvPython locates the Python executable inside the venv
+func findVenvPython(authDir string) string {
+	var venvPython string
+	if runtime.GOOS == "windows" {
+		venvPython = filepath.Join(authDir, ".venv", "Scripts", "python.exe")
+	} else {
+		venvPython = filepath.Join(authDir, ".venv", "bin", "python")
+	}
+	if _, err := os.Stat(venvPython); err == nil {
+		return venvPython
+	}
+	return "python" // fallback to system python
+}
+
 // RunLogin executes the Python login script and returns credentials for all providers
 func RunLogin(email, password string) (*LoginResult, error) {
-	// Create command: python auth/login.py --email X --password Y
-	cmd := exec.Command("python", "auth/login.py", "--email", email, "--password", password)
+	authDir := findAuthDir()
+	pythonExe := findVenvPython(authDir)
+	loginScript := filepath.Join(authDir, "login.py")
+
+	cmd := exec.Command(pythonExe, loginScript, "--email", email, "--password", password)
 
 	// Get stdout pipe
 	stdout, err := cmd.StdoutPipe()
@@ -137,6 +178,125 @@ func RunLogin(email, password string) (*LoginResult, error) {
 	}
 
 	// Ensure we got a result
+	if result == nil {
+		return nil, fmt.Errorf("no result received from python script")
+	}
+
+	return result, nil
+}
+
+// ProgressCallback is called for each progress event during login
+type ProgressCallback func(ProgressEvent)
+
+// LoginOptions holds configuration for the login process
+type LoginOptions struct {
+	Headless   bool
+	Concurrent int
+	Priority   string
+	ProxyURL   string
+}
+
+// RunLoginWithProgress executes login with progress callbacks for real-time logging
+func RunLoginWithProgress(email, password string, onProgress ProgressCallback) (*LoginResult, error) {
+	return RunLoginWithOptions(email, password, LoginOptions{
+		Headless:   true,
+		Concurrent: 2,
+		Priority:   "standard",
+	}, onProgress)
+}
+
+// RunLoginWithOptions executes login with full configuration
+func RunLoginWithOptions(email, password string, opts LoginOptions, onProgress ProgressCallback) (*LoginResult, error) {
+	authDir := findAuthDir()
+	pythonExe := findVenvPython(authDir)
+	loginScript := filepath.Join(authDir, "login.py")
+
+	cmd := exec.Command(pythonExe, loginScript, "--email", email, "--password", password)
+
+	// Set environment variables for Python script
+	cmd.Env = append(os.Environ(),
+		"BATCHER_ENABLE_CAMOUFOX=true",
+		fmt.Sprintf("BATCHER_CAMOUFOX_HEADLESS=%v", opts.Headless),
+		fmt.Sprintf("BATCHER_CONCURRENT=%d", opts.Concurrent),
+		fmt.Sprintf("BATCHER_PRIORITY=%s", opts.Priority),
+	)
+	if opts.ProxyURL != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("BATCHER_PROXY_URL=%s", opts.ProxyURL))
+	}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start python subprocess: %w", err)
+	}
+
+	scanner := bufio.NewScanner(stdout)
+	var result *LoginResult
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var event map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			continue
+		}
+
+		eventType, ok := event["type"].(string)
+		if !ok {
+			continue
+		}
+
+		switch eventType {
+		case "progress":
+			var progress ProgressEvent
+			if err := json.Unmarshal([]byte(line), &progress); err == nil {
+				if onProgress != nil {
+					onProgress(progress)
+				}
+			}
+
+		case "error":
+			var errEvent ErrorEvent
+			if err := json.Unmarshal([]byte(line), &errEvent); err == nil {
+				if onProgress != nil {
+					onProgress(ProgressEvent{
+						Type:     "error",
+						Provider: errEvent.Provider,
+						Message:  errEvent.Error,
+					})
+				}
+			}
+
+		case "result":
+			var resultEvent ResultEvent
+			if err := json.Unmarshal([]byte(line), &resultEvent); err != nil {
+				return nil, fmt.Errorf("failed to parse result event: %w", err)
+			}
+
+			result = &LoginResult{
+				Kiro:      mapToProviderCredentials(resultEvent.Kiro),
+				CodeBuddy: mapToProviderCredentials(resultEvent.CodeBuddy),
+				Wavespeed: mapToProviderCredentials(resultEvent.Wavespeed),
+				Canva:     mapToProviderCredentials(resultEvent.Canva),
+				YepAPI:    mapToProviderCredentials(resultEvent.YepAPI),
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading subprocess output: %w", err)
+	}
+
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf("python subprocess failed: %w", err)
+	}
+
 	if result == nil {
 		return nil, fmt.Errorf("no result received from python script")
 	}

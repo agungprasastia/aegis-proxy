@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -175,7 +178,9 @@ func startServers() {
 	fmt.Printf("\n%s✓ Aegis Proxy is running%s\n", colorGreen, colorReset)
 	fmt.Printf("%s  API Key: %s%s\n", colorWhite, apiKey, colorReset)
 	fmt.Printf("%s  Dashboard: http://%s%s\n", colorWhite, cfg.DashboardAddr(), colorReset)
-	fmt.Printf("%s  Dashboard Password: %s%s\n", colorWhite, cfg.DashboardPassword, colorReset)
+	if cfg.DashboardPassword != "" {
+		fmt.Printf("%s  Dashboard Password: %s%s\n", colorWhite, cfg.DashboardPassword, colorReset)
+	}
 	fmt.Printf("\n%sPress Ctrl+C to stop%s\n\n", colorYellow, colorReset)
 
 	sigChan := make(chan os.Signal, 1)
@@ -364,15 +369,19 @@ func processProviderCredentials(am *accounts.AccountManager, email, password, pr
 		return
 	}
 
-	// Extract token and cookie
-	token := ""
+	// Serialize full credentials as JSON for account.Token
+	// Providers expect Token to be JSON: {"access_token":"...","refresh_token":"...",...}
+	tokenJSON := ""
 	cookie := ""
 	if creds.Credentials != nil {
-		if t, ok := creds.Credentials["token"].(string); ok {
-			token = t
+		if credBytes, err := json.Marshal(creds.Credentials); err == nil {
+			tokenJSON = string(credBytes)
 		}
-		if c, ok := creds.Credentials["cookie"].(string); ok {
-			cookie = c
+		for _, key := range []string{"cookie", "cookies", "session", "all_cookies"} {
+			if c, ok := creds.Credentials[key].(string); ok && c != "" {
+				cookie = c
+				break
+			}
 		}
 	}
 
@@ -384,10 +393,12 @@ func processProviderCredentials(am *accounts.AccountManager, email, password, pr
 		return
 	}
 
-	// Update token
-	if err := am.UpdateToken(acc.ID, token, cookie); err != nil {
+	// Update token in DB and in-memory object
+	if err := am.UpdateToken(acc.ID, tokenJSON, cookie); err != nil {
 		fmt.Printf("%sWarning: Failed to update token for %s (%s): %v%s\n", colorYellow, email, providerName, err, colorReset)
 	}
+	acc.Token = tokenJSON
+	acc.Cookie = cookie
 
 	// Set status to active initially
 	if err := am.UpdateStatus(acc.ID, models.StatusActive, ""); err != nil {
@@ -580,8 +591,123 @@ func handleExposeCommand(args []string) {
 
 func setupPythonAuth() {
 	fmt.Printf("%s=== Python Auth Setup ===%s\n\n", colorCyan, colorReset)
-	fmt.Printf("%sThis feature requires Python automation scripts%s\n", colorWhite, colorReset)
-	fmt.Printf("%sPlease refer to the documentation for setup instructions%s\n", colorWhite, colorReset)
+
+	// Find auth directory — check multiple locations
+	exePath, err := os.Executable()
+	if err != nil {
+		exePath = "."
+	}
+	exeDir := filepath.Dir(exePath)
+	homeDir, _ := os.UserHomeDir()
+
+	authDirs := []string{
+		filepath.Join(".", "auth"),                              // Current working directory
+		filepath.Join(exeDir, "auth"),                           // Next to binary
+		filepath.Join(exeDir, "..", "auth"),                     // Parent of binary (e.g. bin/../auth)
+		filepath.Join(homeDir, ".aegis-proxy", "auth"),          // ~/.aegis-proxy/auth/
+	}
+
+	var authDir string
+	for _, dir := range authDirs {
+		if _, err := os.Stat(filepath.Join(dir, "requirements.txt")); err == nil {
+			authDir = dir
+			break
+		}
+	}
+
+	if authDir == "" {
+		fmt.Printf("%s✗ Auth directory not found%s\n", colorRed, colorReset)
+		fmt.Printf("%s  Expected 'auth/' folder with requirements.txt next to aegis binary%s\n", colorWhite, colorReset)
+		return
+	}
+
+	fmt.Printf("%s→ Auth directory: %s%s\n", colorCyan, authDir, colorReset)
+
+	// Detect Python 3.10+
+	pythonCmd := ""
+	for _, cmd := range []string{"python", "python3", "py"} {
+		out, err := exec.Command(cmd, "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')").Output()
+		if err == nil {
+			version := strings.TrimSpace(string(out))
+			parts := strings.Split(version, ".")
+			if len(parts) >= 2 {
+				major := 0
+				minor := 0
+				fmt.Sscanf(parts[0], "%d", &major)
+				fmt.Sscanf(parts[1], "%d", &minor)
+				if major >= 3 && minor >= 10 {
+					pythonCmd = cmd
+					fmt.Printf("%s→ Using %s (%s)%s\n", colorCyan, cmd, version, colorReset)
+					break
+				}
+			}
+		}
+	}
+
+	if pythonCmd == "" {
+		fmt.Printf("%s✗ Python 3.10+ is required but not found%s\n", colorRed, colorReset)
+		fmt.Printf("%s  Install Python 3.10+ from https://python.org and try again%s\n", colorWhite, colorReset)
+		return
+	}
+
+	venvDir := filepath.Join(authDir, ".venv")
+
+	// Create venv if it doesn't exist
+	if _, err := os.Stat(venvDir); os.IsNotExist(err) {
+		fmt.Printf("%s→ Creating virtual environment...%s\n", colorCyan, colorReset)
+		cmd := exec.Command(pythonCmd, "-m", "venv", venvDir)
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("%s✗ Failed to create venv: %v%s\n", colorRed, err, colorReset)
+			return
+		}
+	} else {
+		fmt.Printf("%s→ Virtual environment already exists%s\n", colorCyan, colorReset)
+	}
+
+	// Determine pip and python paths inside venv
+	var pipPath, venvPython string
+	if runtime.GOOS == "windows" {
+		pipPath = filepath.Join(venvDir, "Scripts", "pip.exe")
+		venvPython = filepath.Join(venvDir, "Scripts", "python.exe")
+	} else {
+		pipPath = filepath.Join(venvDir, "bin", "pip")
+		venvPython = filepath.Join(venvDir, "bin", "python")
+	}
+
+	// Upgrade pip
+	fmt.Printf("%s→ Upgrading pip...%s\n", colorCyan, colorReset)
+	cmd := exec.Command(pipPath, "install", "--quiet", "--upgrade", "pip")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%s! pip upgrade failed (non-critical): %v%s\n", colorYellow, err, colorReset)
+	}
+
+	// Install dependencies
+	fmt.Printf("%s→ Installing dependencies...%s\n", colorCyan, colorReset)
+	reqFile := filepath.Join(authDir, "requirements.txt")
+	cmd = exec.Command(pipPath, "install", "--quiet", "-r", reqFile)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%s✗ Failed to install dependencies: %v%s\n", colorRed, err, colorReset)
+		return
+	}
+
+	// Install Camoufox browser
+	fmt.Printf("%s→ Fetching Camoufox browser (this may take a minute)...%s\n", colorCyan, colorReset)
+	cmd = exec.Command(venvPython, "-m", "camoufox", "fetch")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("%s! Camoufox fetch failed: %v%s\n", colorYellow, err, colorReset)
+		fmt.Printf("%s  You can try manually: %s -m camoufox fetch%s\n", colorWhite, venvPython, colorReset)
+	}
+
+	fmt.Printf("\n%s✓ Auth automation setup complete%s\n", colorGreen, colorReset)
+	fmt.Printf("%s✓ Python venv: %s%s\n", colorGreen, venvDir, colorReset)
 }
 
 func handleMITMCommand(args []string) {

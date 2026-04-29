@@ -23,6 +23,9 @@ type Config struct {
 	DBPath              string          `json:"db_path"`
 	UpstreamProxy       string          `json:"upstream_proxy"`
 	AccountAddHeadless  bool            `json:"account_add_headless"`
+	AccountAddConcurrent int           `json:"account_add_concurrent"`
+	AccountAddPriority  string          `json:"account_add_priority"`
+	AccountAddParallel  int             `json:"account_add_parallel"`
 	ExposeToNetwork     bool            `json:"expose_to_network"`
 	WhitelistEnabled    bool            `json:"whitelist_enabled"`
 	WhitelistedIPs      []string        `json:"whitelisted_ips"`
