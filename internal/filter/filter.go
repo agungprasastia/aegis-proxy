@@ -207,6 +207,20 @@ func (e *FilterEngine) ToggleFilter(id string) error {
 	return nil
 }
 
+// SetActive sets the IsActive flag for a filter by ID
+func (e *FilterEngine) SetActive(id string, active bool) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	filter, exists := e.filters[id]
+	if !exists {
+		return fmt.Errorf("filter with ID %s not found", id)
+	}
+
+	filter.IsActive = active
+	return nil
+}
+
 // SetMode sets the FilterMode for a filter by ID
 func (e *FilterEngine) SetMode(id string, mode FilterMode) error {
 	e.mu.Lock()

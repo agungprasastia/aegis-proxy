@@ -43,6 +43,30 @@ func (ds *DashboardServer) Start() error {
 	mux.HandleFunc("/api/proxies/test", authMiddleware(http.HandlerFunc(ds.apiServer.HandleTestProxies)).ServeHTTP)
 	mux.HandleFunc("/api/settings", ds.handleSettingsRoute(authMiddleware))
 
+	// Batch endpoints
+	mux.HandleFunc("/api/batch/start", authMiddleware(http.HandlerFunc(ds.apiServer.HandleBatchStart)).ServeHTTP)
+	mux.HandleFunc("/api/batch/status", authMiddleware(http.HandlerFunc(ds.apiServer.HandleBatchStatus)).ServeHTTP)
+	mux.HandleFunc("/api/batch/logs", authMiddleware(http.HandlerFunc(ds.apiServer.HandleBatchLogs)).ServeHTTP)
+	mux.HandleFunc("/api/batch/cancel", authMiddleware(http.HandlerFunc(ds.apiServer.HandleBatchCancel)).ServeHTTP)
+	mux.HandleFunc("/api/batch/failed", authMiddleware(http.HandlerFunc(ds.apiServer.HandleBatchFailed)).ServeHTTP)
+	mux.HandleFunc("/api/batch/events", ds.handleBatchEventsWithTokenAuth)
+
+	// Account management
+	mux.HandleFunc("/api/accounts/fix-errors", authMiddleware(http.HandlerFunc(ds.apiServer.HandleFixErrors)).ServeHTTP)
+
+	// Auth
+	mux.HandleFunc("/api/auth/status", ds.apiServer.HandleAuthStatus)
+
+	// Proxy management
+	mux.HandleFunc("/api/proxies/failed", authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteFailedProxies)).ServeHTTP)
+	mux.HandleFunc("/api/proxies/all", authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteAllProxies)).ServeHTTP)
+
+	// Filters
+	mux.HandleFunc("/api/filters", ds.handleFiltersRoute(authMiddleware))
+	mux.HandleFunc("/api/filters/", ds.handleFilterByIDRoute(authMiddleware))
+	mux.HandleFunc("/api/filter-templates", authMiddleware(http.HandlerFunc(ds.apiServer.HandleListFilterTemplates)).ServeHTTP)
+
+	mux.HandleFunc("/health", ds.handleHealth)
 	mux.HandleFunc("/", ds.handleStatic)
 
 	handler := corsMiddleware(mux)
@@ -104,6 +128,8 @@ func (ds *DashboardServer) handleProxiesRoute(authMiddleware func(http.Handler) 
 			authMiddleware(http.HandlerFunc(ds.apiServer.HandleListProxies)).ServeHTTP(w, r)
 		case http.MethodPost:
 			authMiddleware(http.HandlerFunc(ds.apiServer.HandleAddProxy)).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteProxy)).ServeHTTP(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -145,10 +171,67 @@ func (ds *DashboardServer) handleStatic(w http.ResponseWriter, r *http.Request) 
 		contentType = "text/css"
 	} else if strings.HasSuffix(r.URL.Path, ".json") {
 		contentType = "application/json"
+	} else if strings.HasSuffix(r.URL.Path, ".svg") {
+		contentType = "image/svg+xml"
+	} else if strings.HasSuffix(r.URL.Path, ".png") {
+		contentType = "image/png"
+	} else if strings.HasSuffix(r.URL.Path, ".ico") {
+		contentType = "image/x-icon"
 	}
 
 	w.Header().Set("Content-Type", contentType)
 	w.Write(content)
+}
+
+func (ds *DashboardServer) handleFiltersRoute(authMiddleware func(http.Handler) http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleListFilters)).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleAddFilter)).ServeHTTP(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func (ds *DashboardServer) handleFilterByIDRoute(authMiddleware func(http.Handler) http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleUpdateFilter)).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteFilter)).ServeHTTP(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func (ds *DashboardServer) handleBatchEventsWithTokenAuth(w http.ResponseWriter, r *http.Request) {
+	// SSE needs auth via query param since EventSource can't set headers
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		// Try Authorization header as fallback
+		authHeader := r.Header.Get("Authorization")
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
+		}
+	}
+
+	if token == "" || !ds.apiServer.Sessions.Validate(token) {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	ds.apiServer.HandleBatchEvents(w, r)
+}
+
+func (ds *DashboardServer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
