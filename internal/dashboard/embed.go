@@ -1,26 +1,29 @@
 package dashboard
 
 import (
+	"embed"
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
+	"strings"
 )
 
+//go:embed all:dist
+var embeddedFiles embed.FS
+
 func GetStaticFile(path string) ([]byte, error) {
-	if path == "/" {
+	if path == "/" || path == "" {
 		path = "/index.html"
 	}
 
-	cleanPath := filepath.Clean(path)
-	if cleanPath[0] == '/' {
-		cleanPath = cleanPath[1:]
+	// Clean the path - use forward slashes for embed.FS
+	cleanPath := strings.TrimPrefix(path, "/")
+	cleanPath = strings.ReplaceAll(cleanPath, "\\", "/")
+
+	// Read from embedded filesystem
+	content, err := fs.ReadFile(embeddedFiles, "dist/"+cleanPath)
+	if err != nil {
+		return nil, fmt.Errorf("file not found: %s (tried dist/%s)", path, cleanPath)
 	}
 
-	devPath := filepath.Join("web", "dashboard", "dist", cleanPath)
-	content, err := os.ReadFile(devPath)
-	if err == nil {
-		return content, nil
-	}
-
-	return nil, fmt.Errorf("file not found: %s", path)
+	return content, nil
 }
