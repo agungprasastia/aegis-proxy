@@ -12,7 +12,7 @@ import (
 
 // WarmupAccount sends a small test request to verify the account is working
 func WarmupAccount(prov provider.Provider, account *models.Account, db *database.DB) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	req := &provider.ChatRequest{

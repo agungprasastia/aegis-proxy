@@ -1,15 +1,14 @@
 package kiro
 
 import (
-	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/aegis-proxy/aegis/internal/models"
@@ -20,7 +19,7 @@ import (
 const (
 	kiroAPIEndpoint   = "https://q.us-east-1.amazonaws.com/"
 	kiroUsageEndpoint = "https://q.us-east-1.amazonaws.com/getUsageLimits"
-	kiroTimeout       = 60 * time.Second
+	kiroTimeout       = 120 * time.Second
 )
 
 type KiroProvider struct {
@@ -34,6 +33,49 @@ type kiroTokenData struct {
 	ProfileARN   string `json:"profile_arn"`
 	ExpiresAt    string `json:"expires_at"`
 	ExpiresIn    string `json:"expires_in"`
+}
+
+// Amazon Q request format (matches official AWS SDK structure)
+type kiroRequest struct {
+	ConversationState kiroConversationState `json:"conversationState"`
+	ProfileARN        string                `json:"profileArn,omitempty"`
+}
+
+type kiroConversationState struct {
+	ConversationID  string             `json:"conversationId,omitempty"`
+	CurrentMessage  kiroCurrentMessage `json:"currentMessage"`
+	ChatTriggerType string             `json:"chatTriggerType"`
+	History         []kiroChatMessage  `json:"history,omitempty"`
+}
+
+type kiroCurrentMessage struct {
+	UserInputMessage kiroUserInputMessage `json:"userInputMessage"`
+}
+
+type kiroUserInputMessage struct {
+	Content                 string                  `json:"content"`
+	UserInputMessageContext *kiroMessageContext      `json:"userInputMessageContext,omitempty"`
+	Origin                  string                  `json:"origin,omitempty"`
+	ModelID                 string                  `json:"modelId,omitempty"`
+}
+
+type kiroMessageContext struct {
+	EnvState *kiroEnvState `json:"envState,omitempty"`
+}
+
+type kiroEnvState struct {
+	OperatingSystem        string `json:"operatingSystem,omitempty"`
+	CurrentWorkingDirectory string `json:"currentWorkingDirectory,omitempty"`
+}
+
+type kiroChatMessage struct {
+	UserInputMessage         *kiroUserInputMessage         `json:"userInputMessage,omitempty"`
+	AssistantResponseMessage *kiroAssistantResponseMessage  `json:"assistantResponseMessage,omitempty"`
+}
+
+type kiroAssistantResponseMessage struct {
+	MessageID string `json:"messageId"`
+	Content   string `json:"content"`
 }
 
 type kiroUsageResponse struct {
@@ -107,42 +149,179 @@ func (p *KiroProvider) getClient() *http.Client {
 	return p.client
 }
 
-func (p *KiroProvider) extractAccessToken(account *models.Account) (string, error) {
+func (p *KiroProvider) extractTokenData(account *models.Account) (*kiroTokenData, error) {
 	if account.Token == "" {
-		return "", fmt.Errorf("account token is empty")
+		return nil, fmt.Errorf("account token is empty")
 	}
 
 	var tokenData kiroTokenData
 	if err := json.Unmarshal([]byte(account.Token), &tokenData); err != nil {
-		return "", fmt.Errorf("failed to parse token JSON: %w", err)
+		return nil, fmt.Errorf("failed to parse token JSON: %w", err)
 	}
 
 	if tokenData.AccessToken == "" {
-		return "", fmt.Errorf("access_token not found in token data")
+		return nil, fmt.Errorf("access_token not found in token data")
 	}
 
-	return tokenData.AccessToken, nil
+	return &tokenData, nil
+}
+
+func (p *KiroProvider) extractAccessToken(account *models.Account) (string, error) {
+	td, err := p.extractTokenData(account)
+	if err != nil {
+		return "", err
+	}
+	return td.AccessToken, nil
+}
+
+// generateUUID generates a random UUID v4 string
+func generateUUID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
+
+// mapModelToKiro maps our model IDs to Amazon Q model IDs
+func mapModelToKiro(modelID string) string {
+	modelMap := map[string]string{
+		"auto":              "",
+		"claude-sonnet-4.5": "claude-sonnet-4-5-v2",
+		"claude-sonnet-4":   "claude-sonnet-4",
+		"claude-haiku-4.5":  "claude-haiku-4-5-v1",
+		"deepseek-3.2":      "deepseek-r1",
+		"minimax-m2.5":      "minimax-m1",
+		"glm-5":             "glm-4-plus",
+		"qwen3-coder-next":  "qwen2-5-max",
+	}
+	if mapped, ok := modelMap[modelID]; ok {
+		return mapped
+	}
+	return modelID
+}
+
+// buildKiroPayload converts OpenAI-style ChatRequest to Amazon Q format
+func buildKiroPayload(req *provider.ChatRequest, profileARN string, modelID string) (*kiroRequest, error) {
+	if len(req.Messages) == 0 {
+		return nil, fmt.Errorf("no messages provided")
+	}
+
+	// Extract the last user message as currentMessage
+	var userMessage string
+	var history []kiroChatMessage
+
+	// Collect system prompt
+	var systemPrompt string
+
+	// Build history from all messages except the last user message
+	for i, msg := range req.Messages {
+		if i == len(req.Messages)-1 && msg.Role == "user" {
+			userMessage = msg.Content
+			continue
+		}
+
+		switch msg.Role {
+		case "user":
+			history = append(history, kiroChatMessage{
+				UserInputMessage: &kiroUserInputMessage{
+					Content: msg.Content,
+					UserInputMessageContext: &kiroMessageContext{
+						EnvState: &kiroEnvState{
+							OperatingSystem:         "windows",
+							CurrentWorkingDirectory: "/",
+						},
+					},
+					Origin: "CLI",
+				},
+			})
+		case "assistant":
+			history = append(history, kiroChatMessage{
+				AssistantResponseMessage: &kiroAssistantResponseMessage{
+					MessageID: generateUUID(),
+					Content:   msg.Content,
+				},
+			})
+		case "system":
+			systemPrompt = msg.Content
+		}
+	}
+
+	// If no explicit user message found at end, use last message
+	if userMessage == "" {
+		lastMsg := req.Messages[len(req.Messages)-1]
+		userMessage = lastMsg.Content
+		// Remove from history if it was added
+		if len(history) > 0 {
+			history = history[:len(history)-1]
+		}
+	}
+
+	// Prepend system prompt to user message if present
+	if systemPrompt != "" {
+		userMessage = "--- SYSTEM PROMPT BEGIN ---\n" + systemPrompt + "\n--- SYSTEM PROMPT END ---\n\n" + userMessage
+	}
+
+	payload := &kiroRequest{
+		ConversationState: kiroConversationState{
+			ConversationID: generateUUID(),
+			CurrentMessage: kiroCurrentMessage{
+				UserInputMessage: kiroUserInputMessage{
+					Content: userMessage,
+					UserInputMessageContext: &kiroMessageContext{
+						EnvState: &kiroEnvState{
+							OperatingSystem:         "windows",
+							CurrentWorkingDirectory: "/",
+						},
+					},
+					Origin:  "CLI",
+					ModelID: modelID,
+				},
+			},
+			ChatTriggerType: "MANUAL",
+			History:         history,
+		},
+		ProfileARN: profileARN,
+	}
+
+	return payload, nil
 }
 
 func (p *KiroProvider) SendChatCompletion(ctx context.Context, account *models.Account, req *provider.ChatRequest) (*provider.ChatResponse, error) {
-	accessToken, err := p.extractAccessToken(account)
+	tokenData, err := p.extractTokenData(account)
 	if err != nil {
 		return nil, fmt.Errorf("token extraction failed: %w", err)
 	}
 
-	reqBody, err := json.Marshal(req)
+	// Map model ID for Amazon Q
+	modelID := mapModelToKiro(req.Model)
+
+	payload, err := buildKiroPayload(req, tokenData.ProfileARN, modelID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Kiro payload: %w", err)
+	}
+
+	reqBody, err := json.Marshal(payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// Send plain JSON request (response comes back as Event Stream binary)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", kiroAPIEndpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", "enowXGateway/1.0.0")
+	httpReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	httpReq.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	httpReq.Header.Set("X-Amz-Target", "AmazonCodeWhispererStreamingService.GenerateAssistantResponse")
+	httpReq.Header.Set("Accept", "*/*")
+	httpReq.Header.Set("User-Agent", "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/windows lang/go app/AmazonQ-For-CLI")
+	httpReq.Header.Set("X-Amzn-Codewhisperer-Optout", "true")
+	httpReq.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
+	if tokenData.ProfileARN != "" {
+		httpReq.Header.Set("x-amzn-codewhisperer-profilearn", tokenData.ProfileARN)
+	}
 
 	resp, err := p.getClient().Do(httpReq)
 	if err != nil {
@@ -150,8 +329,8 @@ func (p *KiroProvider) SendChatCompletion(ctx context.Context, account *models.A
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 {
-		return nil, fmt.Errorf("authentication failed: invalid or expired token")
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return nil, fmt.Errorf("authentication failed: invalid or expired token (status %d)", resp.StatusCode)
 	}
 	if resp.StatusCode == 429 {
 		return nil, fmt.Errorf("rate limit exceeded")
@@ -161,38 +340,82 @@ func (p *KiroProvider) SendChatCompletion(ctx context.Context, account *models.A
 	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body[:min(len(body), 500)]))
 	}
 
-	var chatResp provider.ChatResponse
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+	// Decode AWS Event Stream binary response
+	messages, err := DecodeEventStream(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode event stream: %w", err)
 	}
 
-	return &chatResp, nil
+	content, inputTokens, outputTokens, _ := ParseKiroEvents(messages)
+	if content == "" {
+		return nil, fmt.Errorf("empty response from Kiro API")
+	}
+
+	// Build OpenAI-compatible response
+	chatResp := &provider.ChatResponse{
+		ID:      fmt.Sprintf("chatcmpl-kiro-%d", time.Now().UnixMilli()),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   req.Model,
+		Choices: []provider.Choice{
+			{
+				Index: 0,
+				Message: provider.ChatMessage{
+					Role:    "assistant",
+					Content: content,
+				},
+				FinishReason: "stop",
+			},
+		},
+	}
+
+	chatResp.Usage = provider.Usage{
+		PromptTokens:     inputTokens,
+		CompletionTokens: outputTokens,
+		TotalTokens:      inputTokens + outputTokens,
+	}
+
+	return chatResp, nil
 }
 
 func (p *KiroProvider) SendChatCompletionStream(ctx context.Context, account *models.Account, req *provider.ChatRequest, writer http.ResponseWriter) error {
-	accessToken, err := p.extractAccessToken(account)
+	tokenData, err := p.extractTokenData(account)
 	if err != nil {
 		return fmt.Errorf("token extraction failed: %w", err)
 	}
 
-	req.Stream = true
-	reqBody, err := json.Marshal(req)
+	// Map model ID for Amazon Q
+	modelID := mapModelToKiro(req.Model)
+
+	payload, err := buildKiroPayload(req, tokenData.ProfileARN, modelID)
+	if err != nil {
+		return fmt.Errorf("failed to build Kiro payload: %w", err)
+	}
+
+	reqBody, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
+	// Send plain JSON request (response comes back as Event Stream binary)
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", kiroAPIEndpoint, bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	httpReq.Header.Set("Authorization", "Bearer "+accessToken)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("User-Agent", "enowXGateway/1.0.0")
-	httpReq.Header.Set("Accept", "text/event-stream")
+	httpReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+	httpReq.Header.Set("Content-Type", "application/x-amz-json-1.0")
+	httpReq.Header.Set("X-Amz-Target", "AmazonCodeWhispererStreamingService.GenerateAssistantResponse")
+	httpReq.Header.Set("Accept", "*/*")
+	httpReq.Header.Set("User-Agent", "aws-sdk-rust/1.3.9 ua/2.1 api/codewhispererstreaming/0.1.11582 os/windows lang/go app/AmazonQ-For-CLI")
+	httpReq.Header.Set("X-Amzn-Codewhisperer-Optout", "true")
+	httpReq.Header.Set("Amz-Sdk-Request", "attempt=1; max=3")
+	if tokenData.ProfileARN != "" {
+		httpReq.Header.Set("x-amzn-codewhisperer-profilearn", tokenData.ProfileARN)
+	}
 
 	resp, err := p.getClient().Do(httpReq)
 	if err != nil {
@@ -200,20 +423,18 @@ func (p *KiroProvider) SendChatCompletionStream(ctx context.Context, account *mo
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 {
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return fmt.Errorf("authentication failed: invalid or expired token")
 	}
 	if resp.StatusCode == 429 {
 		return fmt.Errorf("rate limit exceeded")
 	}
-	if resp.StatusCode >= 500 {
-		return fmt.Errorf("server error: status %d", resp.StatusCode)
-	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(body[:min(len(body), 500)]))
 	}
 
+	// Stream OpenAI-compatible SSE events from AWS Event Stream binary response
 	writer.Header().Set("Content-Type", "text/event-stream")
 	writer.Header().Set("Cache-Control", "no-cache")
 	writer.Header().Set("Connection", "keep-alive")
@@ -223,27 +444,46 @@ func (p *KiroProvider) SendChatCompletionStream(ctx context.Context, account *mo
 		return fmt.Errorf("streaming not supported")
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-		
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			
-			if data == "[DONE]" {
-				fmt.Fprintf(writer, "data: [DONE]\n\n")
-				flusher.Flush()
-				break
-			}
+	streamID := fmt.Sprintf("chatcmpl-kiro-%d", time.Now().UnixMilli())
 
-			fmt.Fprintf(writer, "data: %s\n\n", data)
-			flusher.Flush()
+	// Decode AWS Event Stream messages and convert to OpenAI SSE
+	messages, err := DecodeEventStream(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to decode event stream: %w", err)
+	}
+
+	for _, msg := range messages {
+		eventType := msg.Headers[":event-type"]
+
+		if eventType == "assistantResponseEvent" && len(msg.Payload) > 0 {
+			var event struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(msg.Payload, &event); err == nil && event.Content != "" {
+				chunk := map[string]interface{}{
+					"id":      streamID,
+					"object":  "chat.completion.chunk",
+					"created": time.Now().Unix(),
+					"model":   req.Model,
+					"choices": []map[string]interface{}{
+						{
+							"index": 0,
+							"delta": map[string]string{
+								"content": event.Content,
+							},
+						},
+					},
+				}
+				chunkJSON, _ := json.Marshal(chunk)
+				fmt.Fprintf(writer, "data: %s\n\n", chunkJSON)
+				flusher.Flush()
+			}
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("stream reading error: %w", err)
-	}
+	// Send final [DONE] event
+	fmt.Fprintf(writer, "data: [DONE]\n\n")
+	flusher.Flush()
 
 	return nil
 }
@@ -254,13 +494,10 @@ func (p *KiroProvider) ValidateAccount(ctx context.Context, account *models.Acco
 		return err
 	}
 
-	var tokenData kiroTokenData
-	if err := json.Unmarshal([]byte(account.Token), &tokenData); err != nil {
-		return fmt.Errorf("failed to parse token: %w", err)
-	}
+	tokenData, _ := p.extractTokenData(account)
 
 	usageURL := kiroUsageEndpoint
-	if tokenData.ProfileARN != "" {
+	if tokenData != nil && tokenData.ProfileARN != "" {
 		params := url.Values{}
 		params.Add("origin", "AI_EDITOR")
 		params.Add("resourceType", "AGENTIC_REQUEST")
@@ -299,13 +536,10 @@ func (p *KiroProvider) GetCredits(ctx context.Context, account *models.Account) 
 		return 0, 0, err
 	}
 
-	var tokenData kiroTokenData
-	if err := json.Unmarshal([]byte(account.Token), &tokenData); err != nil {
-		return 0, 0, fmt.Errorf("failed to parse token: %w", err)
-	}
+	tokenData, _ := p.extractTokenData(account)
 
 	usageURL := kiroUsageEndpoint
-	if tokenData.ProfileARN != "" {
+	if tokenData != nil && tokenData.ProfileARN != "" {
 		params := url.Values{}
 		params.Add("origin", "AI_EDITOR")
 		params.Add("resourceType", "AGENTIC_REQUEST")
@@ -356,4 +590,11 @@ func (p *KiroProvider) GetCredits(ctx context.Context, account *models.Account) 
 	}
 
 	return usedCredits, totalCredits, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
