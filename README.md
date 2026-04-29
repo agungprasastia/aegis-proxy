@@ -2,8 +2,6 @@
 
 Self-hosted AI proxy that runs locally on your machine. Access premium AI models through OpenAI and Anthropic compatible API endpoints.
 
-Open source alternative to enowxai — no license key required.
-
 ## Features
 
 - **OpenAI + Anthropic Compatible** — Drop-in replacement at `localhost:3130`. Works with Cursor, VS Code, Continue, Cline, and any OpenAI/Anthropic compatible tool.
