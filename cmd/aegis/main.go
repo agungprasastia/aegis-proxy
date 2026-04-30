@@ -18,8 +18,8 @@ import (
 	"github.com/aegis-proxy/aegis/internal/api"
 	"github.com/aegis-proxy/aegis/internal/auth"
 	"github.com/aegis-proxy/aegis/internal/config"
-	"github.com/aegis-proxy/aegis/internal/database"
 	"github.com/aegis-proxy/aegis/internal/dashboard"
+	"github.com/aegis-proxy/aegis/internal/database"
 	"github.com/aegis-proxy/aegis/internal/logger"
 	"github.com/aegis-proxy/aegis/internal/mitm"
 	"github.com/aegis-proxy/aegis/internal/models"
@@ -154,30 +154,26 @@ func startServers() {
 		pool = proxypool.NewProxyPool()
 		poolConfig = &proxypool.ProxyPoolConfig{}
 	}
+	proxyTester := proxypool.NewProxyTester(pool, poolConfig, cfg.DataDir)
+	proxyTester.Start()
 
 	proxyServer := proxy.NewProxyServer(cfg, am, rl, pool)
-	apiServer := api.NewAPIServer(db, am, rl, cfg, pool, poolConfig)
+	apiServer := api.NewAPIServer(db, am, rl, cfg, pool, poolConfig, proxyTester)
 	dashboardServer := dashboard.NewDashboardServer(cfg, apiServer)
+	proxyServer.SetDashboardHandler(dashboardServer.Handler())
 
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 1)
 
 	go func() {
-		fmt.Printf("%s→ Proxy server starting on %s%s\n", colorGreen, cfg.ProxyAddr(), colorReset)
+		fmt.Printf("%s→ Aegis server starting on %s%s\n", colorGreen, cfg.ProxyAddr(), colorReset)
 		if err := proxyServer.Start(); err != nil {
-			errChan <- fmt.Errorf("proxy server error: %w", err)
-		}
-	}()
-
-	go func() {
-		fmt.Printf("%s→ Dashboard server starting on %s%s\n", colorCyan, cfg.DashboardAddr(), colorReset)
-		if err := dashboardServer.Start(); err != nil {
-			errChan <- fmt.Errorf("dashboard server error: %w", err)
+			errChan <- fmt.Errorf("server error: %w", err)
 		}
 	}()
 
 	fmt.Printf("\n%s✓ Aegis Proxy is running%s\n", colorGreen, colorReset)
 	fmt.Printf("%s  API Key: %s%s\n", colorWhite, apiKey, colorReset)
-	fmt.Printf("%s  Dashboard: http://%s%s\n", colorWhite, cfg.DashboardAddr(), colorReset)
+	fmt.Printf("%s  Dashboard: http://%s/dashboard%s\n", colorWhite, cfg.ProxyAddr(), colorReset)
 	if cfg.DashboardPassword != "" {
 		fmt.Printf("%s  Dashboard Password: %s%s\n", colorWhite, cfg.DashboardPassword, colorReset)
 	}
@@ -200,9 +196,7 @@ func startServers() {
 			fmt.Printf("%sError shutting down proxy server: %v%s\n", colorRed, err, colorReset)
 		}
 
-		if err := dashboardServer.Shutdown(ctx); err != nil {
-			fmt.Printf("%sError shutting down dashboard server: %v%s\n", colorRed, err, colorReset)
-		}
+		proxyTester.Stop()
 
 		fmt.Printf("%s✓ Shutdown complete%s\n", colorGreen, colorReset)
 	}
@@ -601,10 +595,10 @@ func setupPythonAuth() {
 	homeDir, _ := os.UserHomeDir()
 
 	authDirs := []string{
-		filepath.Join(".", "auth"),                              // Current working directory
-		filepath.Join(exeDir, "auth"),                           // Next to binary
-		filepath.Join(exeDir, "..", "auth"),                     // Parent of binary (e.g. bin/../auth)
-		filepath.Join(homeDir, ".aegis-proxy", "auth"),          // ~/.aegis-proxy/auth/
+		filepath.Join(".", "auth"),                     // Current working directory
+		filepath.Join(exeDir, "auth"),                  // Next to binary
+		filepath.Join(exeDir, "..", "auth"),            // Parent of binary (e.g. bin/../auth)
+		filepath.Join(homeDir, ".aegis-proxy", "auth"), // ~/.aegis-proxy/auth/
 	}
 
 	var authDir string
@@ -727,7 +721,7 @@ func handleMITMCommand(args []string) {
 	switch args[0] {
 	case "enable":
 		fmt.Printf("%s=== Enabling MITM Proxy ===%s\n\n", colorCyan, colorReset)
-		
+
 		fmt.Printf("%s[1/3] Setting up CA certificate...%s\n", colorWhite, colorReset)
 		if err := mitmProxy.SetupCA(); err != nil {
 			fmt.Printf("%sError: %v%s\n", colorRed, err, colorReset)
@@ -758,20 +752,20 @@ func handleMITMCommand(args []string) {
 
 	case "disable":
 		fmt.Printf("%s=== Disabling MITM Proxy ===%s\n\n", colorCyan, colorReset)
-		
+
 		if err := mitmProxy.Cleanup(); err != nil {
 			fmt.Printf("%sError: %v%s\n", colorRed, err, colorReset)
 			fmt.Printf("%sNote: You may need to run this command with administrator/root privileges%s\n", colorYellow, colorReset)
 			os.Exit(1)
 		}
-		
+
 		fmt.Printf("%s✓ MITM proxy disabled%s\n", colorGreen, colorReset)
 		fmt.Printf("%s✓ Hosts file cleaned up%s\n", colorGreen, colorReset)
 		fmt.Printf("%s✓ CA certificate uninstalled%s\n", colorGreen, colorReset)
 
 	case "status":
 		fmt.Printf("%s=== MITM Proxy Status ===%s\n\n", colorCyan, colorReset)
-		
+
 		certManager := mitm.NewCertificateManager(cfg.DataDir)
 		if certManager.CertExists() {
 			fmt.Printf("%sCA Certificate: %sInstalled%s\n", colorWhite, colorGreen, colorReset)
@@ -821,7 +815,7 @@ func handleMITMCommand(args []string) {
 	case "start":
 		fmt.Printf("%s=== Starting MITM Proxy ===%s\n\n", colorCyan, colorReset)
 		fmt.Printf("%sListening on port 8443...%s\n", colorWhite, colorReset)
-		
+
 		if err := mitmProxy.Start(); err != nil {
 			fmt.Printf("%sError: %v%s\n", colorRed, err, colorReset)
 			os.Exit(1)
@@ -831,7 +825,7 @@ func handleMITMCommand(args []string) {
 		fmt.Printf("%s=== Stopping MITM Proxy ===%s\n\n", colorCyan, colorReset)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		
+
 		if err := mitmProxy.Shutdown(ctx); err != nil {
 			fmt.Printf("%sError: %v%s\n", colorRed, err, colorReset)
 			os.Exit(1)
