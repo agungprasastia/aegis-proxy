@@ -20,6 +20,7 @@ type APIKeyProvider struct {
 	Name       string
 	BaseURL    string
 	AuthHeader string
+	APIPrefix  string
 	Models     []string
 	client     *http.Client
 }
@@ -32,8 +33,17 @@ func NewAPIKeyProvider(name, baseURL, authHeader string) *APIKeyProvider {
 		Name:       name,
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		AuthHeader: authHeader,
+		APIPrefix:  "/v1",
 		client:     &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+func (p *APIKeyProvider) SetAPIPrefix(prefix string) {
+	if prefix == "" {
+		p.APIPrefix = ""
+		return
+	}
+	p.APIPrefix = "/" + strings.Trim(prefix, "/")
 }
 
 func (p *APIKeyProvider) TestConnectivity(ctx context.Context, apiKey string) error {
@@ -50,7 +60,7 @@ func (p *APIKeyProvider) listModels(ctx context.Context, apiKey string, forceRef
 		return append([]string(nil), p.Models...), nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.BaseURL+"/v1/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.endpoint("/models"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +74,9 @@ func (p *APIKeyProvider) listModels(ctx context.Context, apiKey string, forceRef
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("authentication failed: invalid or expired api_key")
+		}
 		return nil, fmt.Errorf("%s models failed: status %d: %s", p.Name, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -99,7 +112,7 @@ func (p *APIKeyProvider) SendRequest(ctx context.Context, apiKey string, req *No
 		return nil, err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.BaseURL+"/v1/chat/completions", bytes.NewReader(body))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint("/chat/completions"), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -114,6 +127,9 @@ func (p *APIKeyProvider) SendRequest(ctx context.Context, apiKey string, req *No
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return nil, fmt.Errorf("authentication failed: invalid or expired api_key")
+		}
 		return nil, fmt.Errorf("%s request failed: status %d: %s", p.Name, resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -156,4 +172,8 @@ func (p *APIKeyProvider) httpClient() *http.Client {
 		return p.client
 	}
 	return http.DefaultClient
+}
+
+func (p *APIKeyProvider) endpoint(path string) string {
+	return p.BaseURL + p.APIPrefix + path
 }
