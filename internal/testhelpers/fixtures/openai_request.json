@@ -1,0 +1,16 @@
+{
+  "model": "claude-sonnet-4.5",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Be concise."
+    },
+    {
+      "role": "user",
+      "content": "Hello from test fixture."
+    }
+  ],
+  "max_tokens": 128,
+  "temperature": 0.2,
+  "stream": false
+}
