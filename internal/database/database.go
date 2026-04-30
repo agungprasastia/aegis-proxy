@@ -41,6 +41,10 @@ func (db *DB) Close() error {
 	return db.conn.Close()
 }
 
+func (db *DB) SQL() *sql.DB {
+	return db.conn
+}
+
 func (db *DB) Query(query string, args ...interface{}) (*sql.Rows, error) {
 	return db.conn.Query(query, args...)
 }

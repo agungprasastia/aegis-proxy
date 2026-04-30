@@ -52,6 +52,9 @@ func (ds *DashboardServer) Handler() http.Handler {
 	mux.HandleFunc("/api/proxies", ds.handleProxiesRoute(authMiddleware))
 	mux.HandleFunc("/api/proxies/config", ds.handleProxyConfigRoute(authMiddleware))
 	mux.HandleFunc("/api/proxies/test", authMiddleware(http.HandlerFunc(ds.apiServer.HandleTestProxies)).ServeHTTP)
+	mux.HandleFunc("/api/providers/apikey", authMiddleware(http.HandlerFunc(ds.apiServer.HandleAPIKeyProviders)).ServeHTTP)
+	mux.HandleFunc("/api/providers/apikey/test", authMiddleware(http.HandlerFunc(ds.apiServer.HandleTestAPIKeyProvider)).ServeHTTP)
+	mux.HandleFunc("/api/providers/apikey/", authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteAPIKeyProvider)).ServeHTTP)
 	mux.HandleFunc("/api/settings", ds.handleSettingsRoute(authMiddleware))
 
 	// Batch endpoints
