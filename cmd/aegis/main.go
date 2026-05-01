@@ -32,9 +32,15 @@ import (
 	_ "github.com/aegis-proxy/aegis/internal/provider/canva"
 	_ "github.com/aegis-proxy/aegis/internal/provider/codebuddy"
 	_ "github.com/aegis-proxy/aegis/internal/provider/codex"
+	_ "github.com/aegis-proxy/aegis/internal/provider/deepseek"
+	_ "github.com/aegis-proxy/aegis/internal/provider/glm"
+	_ "github.com/aegis-proxy/aegis/internal/provider/groq"
 	_ "github.com/aegis-proxy/aegis/internal/provider/kiro"
+	_ "github.com/aegis-proxy/aegis/internal/provider/minimax"
+	_ "github.com/aegis-proxy/aegis/internal/provider/mistral"
 	_ "github.com/aegis-proxy/aegis/internal/provider/wavespeed"
 	_ "github.com/aegis-proxy/aegis/internal/provider/windsurf"
+	_ "github.com/aegis-proxy/aegis/internal/provider/xai"
 	_ "github.com/aegis-proxy/aegis/internal/provider/yepapi"
 )
 

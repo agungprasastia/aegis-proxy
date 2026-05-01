@@ -5,13 +5,19 @@ import (
 )
 
 const (
-	ProviderKiro       = "kiro"
-	ProviderCodeBuddy  = "codebuddy"
-	ProviderWindsurf   = "windsurf"
-	ProviderCanva      = "canva"
-	ProviderYepAPI     = "yepapi"
-	ProviderCodex      = "codex"
-	ProviderWavespeed  = "wavespeed"
+	ProviderKiro      = "kiro"
+	ProviderCodeBuddy = "codebuddy"
+	ProviderWindsurf  = "windsurf"
+	ProviderCanva     = "canva"
+	ProviderYepAPI    = "yepapi"
+	ProviderCodex     = "codex"
+	ProviderWavespeed = "wavespeed"
+	ProviderDeepSeek  = "deepseek"
+	ProviderGroq      = "groq"
+	ProviderGLM       = "glm"
+	ProviderMiniMax   = "minimax"
+	ProviderMistral   = "mistral"
+	ProviderXAI       = "xai"
 )
 
 const (
@@ -23,20 +29,20 @@ const (
 )
 
 type Account struct {
-	ID            int64      `json:"id" db:"id"`
-	Email         string     `json:"email" db:"email"`
-	Password      string     `json:"password" db:"password"`
-	Provider      string     `json:"provider" db:"provider"`
-	Status        string     `json:"status" db:"status"`
-	CreditsUsed   float64    `json:"credits_used" db:"credits_used"`
-	CreditsTotal  float64    `json:"credits_total" db:"credits_total"`
-	Token         string     `json:"token" db:"token"`
-	Cookie        string     `json:"cookie" db:"cookie"`
-	LastUsedAt    *time.Time `json:"last_used_at" db:"last_used_at"`
-	LastSyncedAt  *time.Time `json:"last_synced_at" db:"last_synced_at"`
-	ErrorMessage  string     `json:"error_message" db:"error_message"`
-	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
+	ID           int64      `json:"id" db:"id"`
+	Email        string     `json:"email" db:"email"`
+	Password     string     `json:"password" db:"password"`
+	Provider     string     `json:"provider" db:"provider"`
+	Status       string     `json:"status" db:"status"`
+	CreditsUsed  float64    `json:"credits_used" db:"credits_used"`
+	CreditsTotal float64    `json:"credits_total" db:"credits_total"`
+	Token        string     `json:"token" db:"token"`
+	Cookie       string     `json:"cookie" db:"cookie"`
+	LastUsedAt   *time.Time `json:"last_used_at" db:"last_used_at"`
+	LastSyncedAt *time.Time `json:"last_synced_at" db:"last_synced_at"`
+	ErrorMessage string     `json:"error_message" db:"error_message"`
+	CreatedAt    time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type RequestLog struct {

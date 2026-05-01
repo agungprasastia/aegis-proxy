@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/aegis-proxy/aegis/internal/logger"
 	"github.com/aegis-proxy/aegis/internal/models"
 	"github.com/aegis-proxy/aegis/internal/provider"
+	"github.com/aegis-proxy/aegis/internal/router"
 )
 
 func (ps *ProxyServer) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -18,40 +20,49 @@ func (ps *ProxyServer) handleChatCompletions(w http.ResponseWriter, r *http.Requ
 		writeError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	var req OpenAIChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, r, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Initialize filter engine with default filters
 	filterEngine, err := filter.NewFilterEngine(filter.GetDefaultFilters())
 	if err != nil {
 		writeError(w, r, "Failed to initialize filter engine", http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Apply filter to request messages
 	for i := range req.Messages {
 		req.Messages[i].Content = filterEngine.ApplyFilter(req.Messages[i].Content)
 	}
-	
+
 	// Extract client ID for sticky session
 	clientID := extractClientID(r)
-	
+
+	if combo, err := ps.router.GetCombo(r.Context(), req.Model); err == nil {
+		if req.Stream {
+			writeError(w, r, "streaming combo fallback is not supported", http.StatusBadRequest)
+			return
+		}
+		ps.handleComboChat(w, r, combo, &req, clientID, filterEngine)
+		return
+	}
+
 	// Get model info to determine provider
 	modelInfo, ok := models.GetModelInfo(req.Model)
 	if !ok {
 		writeError(w, r, fmt.Sprintf("model not found: %s", req.Model), http.StatusBadRequest)
 		return
 	}
-	
+
 	// Retry logic: try up to 3 times with different accounts
 	var prov provider.Provider
 	var account *models.Account
 	var lastErr error
-	
+
 	for attempt := 0; attempt < 3; attempt++ {
 		// Get sticky account for this client
 		account, err = ps.accountMgr.GetSticky(modelInfo.Provider, clientID)
@@ -59,16 +70,16 @@ func (ps *ProxyServer) handleChatCompletions(w http.ResponseWriter, r *http.Requ
 			lastErr = err
 			break
 		}
-		
+
 		// Get provider
 		prov, ok = ps.router.GetProvider(modelInfo.Provider)
 		if !ok {
 			lastErr = fmt.Errorf("provider not found: %s", modelInfo.Provider)
 			break
 		}
-		
+
 		startTime := time.Now()
-		
+
 		// Try the request
 		var requestErr error
 		if req.Stream {
@@ -76,12 +87,12 @@ func (ps *ProxyServer) handleChatCompletions(w http.ResponseWriter, r *http.Requ
 		} else {
 			requestErr = ps.tryNonStreamingRequest(w, r, prov, account, &req, startTime, filterEngine)
 		}
-		
+
 		// If successful, return
 		if requestErr == nil {
 			return
 		}
-		
+
 		// If error, mark account and retry
 		lastErr = requestErr
 		ps.accountMgr.MarkError(account.ID, requestErr.Error())
@@ -95,13 +106,13 @@ func (ps *ProxyServer) handleChatCompletions(w http.ResponseWriter, r *http.Requ
 			IPAddress:    getClientIP(r),
 			LatencyMs:    int(time.Since(startTime).Milliseconds()),
 		})
-		
+
 		// Log retry attempt
 		if attempt < 2 {
 			fmt.Printf("sticky account failed, retrying with different account (attempt %d/3)\n", attempt+1)
 		}
 	}
-	
+
 	// All retries failed
 	writeError(w, r, fmt.Sprintf("all retries failed: %v", lastErr), http.StatusServiceUnavailable)
 }
@@ -113,7 +124,7 @@ func extractClientID(r *http.Request) string {
 	if clientID := r.Header.Get("X-Client-ID"); clientID != "" {
 		return clientID
 	}
-	
+
 	// Fall back to API key from Authorization header
 	authHeader := r.Header.Get("Authorization")
 	if authHeader != "" {
@@ -123,7 +134,7 @@ func extractClientID(r *http.Request) string {
 			return parts[1]
 		}
 	}
-	
+
 	// Fall back to IP address
 	return getClientIP(r)
 }
@@ -139,26 +150,26 @@ func (ps *ProxyServer) tryStreamingRequest(w http.ResponseWriter, r *http.Reques
 		Temperature:     req.Temperature,
 		ReasoningEffort: req.ReasoningEffort,
 	}
-	
+
 	// Call provider's streaming method - it handles SSE writing directly
 	err := prov.SendChatCompletionStream(r.Context(), account, chatReq, w)
-	
+
 	latency := int(time.Since(startTime).Milliseconds())
-	
+
 	// Log request
 	logEntry := &models.RequestLog{
-		Model:      req.Model,
-		Provider:   prov.Name(),
-		AccountID:  &account.ID,
-		LatencyMs:  latency,
-		IPAddress:  getClientIP(r),
+		Model:     req.Model,
+		Provider:  prov.Name(),
+		AccountID: &account.ID,
+		LatencyMs: latency,
+		IPAddress: getClientIP(r),
 	}
-	
+
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.StatusCode = http.StatusInternalServerError
 		logEntry.ErrorMessage = err.Error()
-		
+
 		// Check for rate limit or auth errors
 		if strings.Contains(err.Error(), "rate limit") {
 			logEntry.StatusCode = http.StatusTooManyRequests
@@ -169,9 +180,9 @@ func (ps *ProxyServer) tryStreamingRequest(w http.ResponseWriter, r *http.Reques
 		logEntry.Status = "success"
 		logEntry.StatusCode = http.StatusOK
 	}
-	
+
 	ps.logger.Log(logEntry)
-	
+
 	// Log to JSONL
 	if ps.jsonlLogger != nil {
 		ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -184,7 +195,7 @@ func (ps *ProxyServer) tryStreamingRequest(w http.ResponseWriter, r *http.Reques
 			Error:        logEntry.ErrorMessage,
 		})
 	}
-	
+
 	return err
 }
 
@@ -199,54 +210,54 @@ func (ps *ProxyServer) tryNonStreamingRequest(w http.ResponseWriter, r *http.Req
 		Temperature:     req.Temperature,
 		ReasoningEffort: req.ReasoningEffort,
 	}
-	
+
 	// Call provider's non-streaming method
 	chatResp, err := prov.SendChatCompletion(r.Context(), account, chatReq)
-	
+
 	latency := int(time.Since(startTime).Milliseconds())
-	
+
 	// Log request
 	logEntry := &models.RequestLog{
-		Model:      req.Model,
-		Provider:   prov.Name(),
-		AccountID:  &account.ID,
-		LatencyMs:  latency,
-		IPAddress:  getClientIP(r),
+		Model:     req.Model,
+		Provider:  prov.Name(),
+		AccountID: &account.ID,
+		LatencyMs: latency,
+		IPAddress: getClientIP(r),
 	}
-	
+
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.StatusCode = http.StatusInternalServerError
 		logEntry.ErrorMessage = err.Error()
-		
+
 		// Check for rate limit or auth errors
 		if strings.Contains(err.Error(), "rate limit") {
 			logEntry.StatusCode = http.StatusTooManyRequests
 		} else if strings.Contains(err.Error(), "authentication") || strings.Contains(err.Error(), "invalid token") {
 			logEntry.StatusCode = http.StatusUnauthorized
 		}
-		
+
 		ps.logger.Log(logEntry)
 		return err
 	}
-	
+
 	// Convert provider.ChatResponse to OpenAIChatResponse
 	resp := convertProviderResponseToOpenAI(chatResp)
-	
+
 	// Apply reverse filter to response content
 	for i := range resp.Choices {
 		resp.Choices[i].Message.Content = filterEngine.ReverseFilter(resp.Choices[i].Message.Content)
 	}
-	
+
 	// Update log with token usage
 	logEntry.Status = "success"
 	logEntry.StatusCode = http.StatusOK
 	logEntry.PromptTokens = resp.Usage.PromptTokens
 	logEntry.CompletionTokens = resp.Usage.CompletionTokens
 	logEntry.TotalTokens = resp.Usage.TotalTokens
-	
+
 	ps.logger.Log(logEntry)
-	
+
 	// Log to JSONL
 	if ps.jsonlLogger != nil {
 		ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -260,10 +271,49 @@ func (ps *ProxyServer) tryNonStreamingRequest(w http.ResponseWriter, r *http.Req
 			CompletionTokens: resp.Usage.CompletionTokens,
 		})
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 	return nil
+}
+
+func (ps *ProxyServer) handleComboChat(w http.ResponseWriter, r *http.Request, combo *models.Combo, req *OpenAIChatRequest, clientID string, filterEngine *filter.FilterEngine) {
+	startTime := time.Now()
+	normalized := openAIRequestToNormalized(req)
+	resp, err := ps.router.ExecuteWithFallback(router.WithClientID(r.Context(), clientID), combo, normalized)
+	if err != nil {
+		status := comboHTTPStatus(err)
+		ps.logger.Log(&models.RequestLog{Model: req.Model, Provider: "combo", Status: "error", StatusCode: status, ErrorMessage: err.Error(), IPAddress: getClientIP(r), LatencyMs: int(time.Since(startTime).Milliseconds())})
+		writeError(w, r, err.Error(), status)
+		return
+	}
+
+	openaiResp := normalizedToOpenAIResponse(req.Model, resp)
+	for i := range openaiResp.Choices {
+		openaiResp.Choices[i].Message.Content = filterEngine.ReverseFilter(openaiResp.Choices[i].Message.Content)
+	}
+	ps.logger.Log(&models.RequestLog{Model: req.Model, Provider: "combo", Status: "success", StatusCode: http.StatusOK, PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens, IPAddress: getClientIP(r), LatencyMs: int(time.Since(startTime).Milliseconds())})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(openaiResp)
+}
+
+func (ps *ProxyServer) handleComboAnthropic(w http.ResponseWriter, r *http.Request, combo *models.Combo, req *OpenAIChatRequest, clientID string, filterEngine *filter.FilterEngine) {
+	startTime := time.Now()
+	resp, err := ps.router.ExecuteWithFallback(router.WithClientID(r.Context(), clientID), combo, openAIRequestToNormalized(req))
+	if err != nil {
+		status := comboHTTPStatus(err)
+		ps.logger.Log(&models.RequestLog{Model: req.Model, Provider: "combo", Status: "error", StatusCode: status, ErrorMessage: err.Error(), IPAddress: getClientIP(r), LatencyMs: int(time.Since(startTime).Milliseconds())})
+		writeAnthropicError(w, err.Error(), anthropicErrorType(status), status)
+		return
+	}
+
+	openaiResp := normalizedToOpenAIResponse(req.Model, resp)
+	for i := range openaiResp.Choices {
+		openaiResp.Choices[i].Message.Content = filterEngine.ReverseFilter(openaiResp.Choices[i].Message.Content)
+	}
+	ps.logger.Log(&models.RequestLog{Model: req.Model, Provider: "combo", Status: "success", StatusCode: http.StatusOK, PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens, IPAddress: getClientIP(r), LatencyMs: int(time.Since(startTime).Milliseconds())})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(convertInternalToAnthropic(openaiResp))
 }
 
 func (ps *ProxyServer) handleNonStreamingRequest(w http.ResponseWriter, r *http.Request, prov provider.Provider, account *models.Account, req *OpenAIChatRequest, startTime time.Time, filterEngine *filter.FilterEngine) {
@@ -276,26 +326,26 @@ func (ps *ProxyServer) handleNonStreamingRequest(w http.ResponseWriter, r *http.
 		Temperature:     req.Temperature,
 		ReasoningEffort: req.ReasoningEffort,
 	}
-	
+
 	// Call provider's non-streaming method
 	chatResp, err := prov.SendChatCompletion(r.Context(), account, chatReq)
-	
+
 	latency := int(time.Since(startTime).Milliseconds())
-	
+
 	// Log request
 	logEntry := &models.RequestLog{
-		Model:      req.Model,
-		Provider:   prov.Name(),
-		AccountID:  &account.ID,
-		LatencyMs:  latency,
-		IPAddress:  getClientIP(r),
+		Model:     req.Model,
+		Provider:  prov.Name(),
+		AccountID: &account.ID,
+		LatencyMs: latency,
+		IPAddress: getClientIP(r),
 	}
-	
+
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.StatusCode = http.StatusInternalServerError
 		logEntry.ErrorMessage = err.Error()
-		
+
 		// Check for rate limit or auth errors
 		if strings.Contains(err.Error(), "rate limit") {
 			logEntry.StatusCode = http.StatusTooManyRequests
@@ -308,9 +358,9 @@ func (ps *ProxyServer) handleNonStreamingRequest(w http.ResponseWriter, r *http.
 		} else {
 			writeError(w, r, err.Error(), http.StatusInternalServerError)
 		}
-		
+
 		ps.logger.Log(logEntry)
-		
+
 		// Log to JSONL
 		if ps.jsonlLogger != nil {
 			ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -323,27 +373,27 @@ func (ps *ProxyServer) handleNonStreamingRequest(w http.ResponseWriter, r *http.
 				Error:        err.Error(),
 			})
 		}
-		
+
 		return
 	}
-	
+
 	// Convert provider.ChatResponse to OpenAIChatResponse
 	resp := convertProviderResponseToOpenAI(chatResp)
-	
+
 	// Apply reverse filter to response content
 	for i := range resp.Choices {
 		resp.Choices[i].Message.Content = filterEngine.ReverseFilter(resp.Choices[i].Message.Content)
 	}
-	
+
 	// Update log with token usage
 	logEntry.Status = "success"
 	logEntry.StatusCode = http.StatusOK
 	logEntry.PromptTokens = resp.Usage.PromptTokens
 	logEntry.CompletionTokens = resp.Usage.CompletionTokens
 	logEntry.TotalTokens = resp.Usage.TotalTokens
-	
+
 	ps.logger.Log(logEntry)
-	
+
 	// Log to JSONL
 	if ps.jsonlLogger != nil {
 		ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -357,7 +407,7 @@ func (ps *ProxyServer) handleNonStreamingRequest(w http.ResponseWriter, r *http.
 			CompletionTokens: resp.Usage.CompletionTokens,
 		})
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -367,7 +417,7 @@ func (ps *ProxyServer) handleResponses(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	// Responses API is just an alias for chat completions
 	ps.handleChatCompletions(w, r)
 }
@@ -377,47 +427,56 @@ func (ps *ProxyServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	var anthropicReq AnthropicRequest
 	if err := json.NewDecoder(r.Body).Decode(&anthropicReq); err != nil {
 		writeAnthropicError(w, "Invalid request body", "invalid_request_error", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Initialize filter engine with default filters
 	filterEngine, err := filter.NewFilterEngine(filter.GetDefaultFilters())
 	if err != nil {
 		writeAnthropicError(w, "Failed to initialize filter engine", "internal_error", http.StatusInternalServerError)
 		return
 	}
-	
+
 	// Apply filter to request messages
 	for i := range anthropicReq.Messages {
 		anthropicReq.Messages[i].Content = filterEngine.ApplyFilter(anthropicReq.Messages[i].Content)
 	}
-	
+
 	// Apply filter to system message if present
 	if anthropicReq.System != "" {
 		anthropicReq.System = filterEngine.ApplyFilter(anthropicReq.System)
 	}
-	
+
 	openaiReq := convertAnthropicToInternal(&anthropicReq)
-	
+
 	// Extract client ID for sticky session
 	clientID := extractClientID(r)
-	
+
+	if combo, err := ps.router.GetCombo(r.Context(), openaiReq.Model); err == nil {
+		if anthropicReq.Stream {
+			writeAnthropicError(w, "streaming combo fallback is not supported", "invalid_request_error", http.StatusBadRequest)
+			return
+		}
+		ps.handleComboAnthropic(w, r, combo, openaiReq, clientID, filterEngine)
+		return
+	}
+
 	// Get model info to determine provider
 	modelInfo, ok := models.GetModelInfo(openaiReq.Model)
 	if !ok {
 		writeAnthropicError(w, fmt.Sprintf("model not found: %s", openaiReq.Model), "invalid_request_error", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Retry logic: try up to 3 times with different accounts
 	var prov provider.Provider
 	var account *models.Account
 	var lastErr error
-	
+
 	for attempt := 0; attempt < 3; attempt++ {
 		// Get sticky account for this client
 		account, err = ps.accountMgr.GetSticky(modelInfo.Provider, clientID)
@@ -425,16 +484,16 @@ func (ps *ProxyServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 			lastErr = err
 			break
 		}
-		
+
 		// Get provider
 		prov, ok = ps.router.GetProvider(modelInfo.Provider)
 		if !ok {
 			lastErr = fmt.Errorf("provider not found: %s", modelInfo.Provider)
 			break
 		}
-		
+
 		startTime := time.Now()
-		
+
 		// Try the request
 		var requestErr error
 		if anthropicReq.Stream {
@@ -443,12 +502,12 @@ func (ps *ProxyServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 		} else {
 			requestErr = ps.tryAnthropicNonStreaming(w, r, prov, account, openaiReq, startTime, filterEngine)
 		}
-		
+
 		// If successful, return
 		if requestErr == nil {
 			return
 		}
-		
+
 		// If error, mark account and retry
 		lastErr = requestErr
 		ps.accountMgr.MarkError(account.ID, requestErr.Error())
@@ -462,13 +521,13 @@ func (ps *ProxyServer) handleMessages(w http.ResponseWriter, r *http.Request) {
 			IPAddress:    getClientIP(r),
 			LatencyMs:    int(time.Since(startTime).Milliseconds()),
 		})
-		
+
 		// Log retry attempt
 		if attempt < 2 {
 			fmt.Printf("sticky account failed, retrying with different account (attempt %d/3)\n", attempt+1)
 		}
 	}
-	
+
 	// All retries failed
 	writeAnthropicError(w, fmt.Sprintf("all retries failed: %v", lastErr), "service_unavailable", http.StatusServiceUnavailable)
 }
@@ -484,7 +543,7 @@ func (ps *ProxyServer) tryAnthropicStreaming(w http.ResponseWriter, r *http.Requ
 		Temperature:     req.Temperature,
 		ReasoningEffort: req.ReasoningEffort,
 	}
-	
+
 	// We need to intercept the stream to convert OpenAI format to Anthropic format
 	// Create a custom response writer that captures the stream
 	streamWriter := &anthropicStreamWriter{
@@ -492,56 +551,56 @@ func (ps *ProxyServer) tryAnthropicStreaming(w http.ResponseWriter, r *http.Requ
 		filterEngine:   filterEngine,
 		model:          req.Model,
 	}
-	
+
 	// Set Anthropic SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	
+
 	// Send message_start event
 	fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_%d\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"%s\"}}\n\n", time.Now().Unix(), req.Model)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	
+
 	// Send content_block_start event
 	fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	
+
 	// Call provider's streaming method
 	err := prov.SendChatCompletionStream(r.Context(), account, chatReq, streamWriter)
-	
+
 	latency := int(time.Since(startTime).Milliseconds())
-	
+
 	// Send message_delta and message_stop events
 	if err == nil {
 		fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		
+
 		fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 	}
-	
+
 	// Log request
 	logEntry := &models.RequestLog{
-		Model:      req.Model,
-		Provider:   prov.Name(),
-		AccountID:  &account.ID,
-		LatencyMs:  latency,
-		IPAddress:  getClientIP(r),
+		Model:     req.Model,
+		Provider:  prov.Name(),
+		AccountID: &account.ID,
+		LatencyMs: latency,
+		IPAddress: getClientIP(r),
 	}
-	
+
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.StatusCode = http.StatusInternalServerError
 		logEntry.ErrorMessage = err.Error()
-		
+
 		if strings.Contains(err.Error(), "rate limit") {
 			logEntry.StatusCode = http.StatusTooManyRequests
 		} else if strings.Contains(err.Error(), "authentication") || strings.Contains(err.Error(), "invalid token") {
@@ -551,7 +610,7 @@ func (ps *ProxyServer) tryAnthropicStreaming(w http.ResponseWriter, r *http.Requ
 		logEntry.Status = "success"
 		logEntry.StatusCode = http.StatusOK
 	}
-	
+
 	ps.logger.Log(logEntry)
 	return err
 }
@@ -566,7 +625,7 @@ func (ps *ProxyServer) handleAnthropicStreaming(w http.ResponseWriter, r *http.R
 		Temperature:     req.Temperature,
 		ReasoningEffort: req.ReasoningEffort,
 	}
-	
+
 	// We need to intercept the stream to convert OpenAI format to Anthropic format
 	// Create a custom response writer that captures the stream
 	streamWriter := &anthropicStreamWriter{
@@ -574,56 +633,56 @@ func (ps *ProxyServer) handleAnthropicStreaming(w http.ResponseWriter, r *http.R
 		filterEngine:   filterEngine,
 		model:          req.Model,
 	}
-	
+
 	// Set Anthropic SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	
+
 	// Send message_start event
 	fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_%d\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"%s\"}}\n\n", time.Now().Unix(), req.Model)
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	
+
 	// Send content_block_start event
 	fmt.Fprintf(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
 	if flusher, ok := w.(http.Flusher); ok {
 		flusher.Flush()
 	}
-	
+
 	// Call provider's streaming method
 	err := prov.SendChatCompletionStream(r.Context(), account, chatReq, streamWriter)
-	
+
 	latency := int(time.Since(startTime).Milliseconds())
-	
+
 	// Send message_delta and message_stop events
 	if err == nil {
 		fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":5}}\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
-		
+
 		fmt.Fprintf(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 	}
-	
+
 	// Log request
 	logEntry := &models.RequestLog{
-		Model:      req.Model,
-		Provider:   prov.Name(),
-		AccountID:  &account.ID,
-		LatencyMs:  latency,
-		IPAddress:  getClientIP(r),
+		Model:     req.Model,
+		Provider:  prov.Name(),
+		AccountID: &account.ID,
+		LatencyMs: latency,
+		IPAddress: getClientIP(r),
 	}
-	
+
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.StatusCode = http.StatusInternalServerError
 		logEntry.ErrorMessage = err.Error()
-		
+
 		if strings.Contains(err.Error(), "rate limit") {
 			logEntry.StatusCode = http.StatusTooManyRequests
 		} else if strings.Contains(err.Error(), "authentication") || strings.Contains(err.Error(), "invalid token") {
@@ -634,9 +693,9 @@ func (ps *ProxyServer) handleAnthropicStreaming(w http.ResponseWriter, r *http.R
 		logEntry.Status = "success"
 		logEntry.StatusCode = http.StatusOK
 	}
-	
+
 	ps.logger.Log(logEntry)
-	
+
 	// Log to JSONL
 	if ps.jsonlLogger != nil {
 		ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -662,34 +721,34 @@ func (ps *ProxyServer) tryAnthropicNonStreaming(w http.ResponseWriter, r *http.R
 		Temperature:     req.Temperature,
 		ReasoningEffort: req.ReasoningEffort,
 	}
-	
+
 	// Call provider's non-streaming method
 	chatResp, err := prov.SendChatCompletion(r.Context(), account, chatReq)
-	
+
 	latency := int(time.Since(startTime).Milliseconds())
-	
+
 	// Log request
 	logEntry := &models.RequestLog{
-		Model:      req.Model,
-		Provider:   prov.Name(),
-		AccountID:  &account.ID,
-		LatencyMs:  latency,
-		IPAddress:  getClientIP(r),
+		Model:     req.Model,
+		Provider:  prov.Name(),
+		AccountID: &account.ID,
+		LatencyMs: latency,
+		IPAddress: getClientIP(r),
 	}
-	
+
 	if err != nil {
 		logEntry.Status = "error"
 		logEntry.StatusCode = http.StatusInternalServerError
 		logEntry.ErrorMessage = err.Error()
-		
+
 		if strings.Contains(err.Error(), "rate limit") {
 			logEntry.StatusCode = http.StatusTooManyRequests
 		} else if strings.Contains(err.Error(), "authentication") || strings.Contains(err.Error(), "invalid token") {
 			logEntry.StatusCode = http.StatusUnauthorized
 		}
-		
+
 		ps.logger.Log(logEntry)
-		
+
 		// Log to JSONL
 		if ps.jsonlLogger != nil {
 			ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -702,30 +761,30 @@ func (ps *ProxyServer) tryAnthropicNonStreaming(w http.ResponseWriter, r *http.R
 				Error:        err.Error(),
 			})
 		}
-		
+
 		return err
 	}
-	
+
 	// Convert provider.ChatResponse to OpenAIChatResponse first
 	openaiResp := convertProviderResponseToOpenAI(chatResp)
-	
+
 	// Then convert to Anthropic format
 	resp := convertInternalToAnthropic(openaiResp)
-	
+
 	// Apply reverse filter to response content
 	for i := range resp.Content {
 		resp.Content[i].Text = filterEngine.ReverseFilter(resp.Content[i].Text)
 	}
-	
+
 	// Update log with token usage
 	logEntry.Status = "success"
 	logEntry.StatusCode = http.StatusOK
 	logEntry.PromptTokens = resp.Usage.InputTokens
 	logEntry.CompletionTokens = resp.Usage.OutputTokens
 	logEntry.TotalTokens = resp.Usage.InputTokens + resp.Usage.OutputTokens
-	
+
 	ps.logger.Log(logEntry)
-	
+
 	// Log to JSONL
 	if ps.jsonlLogger != nil {
 		ps.jsonlLogger.Log(logger.RequestLogEntry{
@@ -739,7 +798,7 @@ func (ps *ProxyServer) tryAnthropicNonStreaming(w http.ResponseWriter, r *http.R
 			CompletionTokens: resp.Usage.OutputTokens,
 		})
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 	return nil
@@ -750,7 +809,7 @@ func (ps *ProxyServer) handleImageGeneration(w http.ResponseWriter, r *http.Requ
 		writeError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	writeError(w, r, "Image generation not yet implemented", http.StatusNotImplemented)
 }
 
@@ -759,25 +818,25 @@ func (ps *ProxyServer) handleListModels(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	// Get all models from registry
 	allModels := models.ListAllModels()
-	
+
 	// Convert to OpenAI model format
 	openaiModels := make([]OpenAIModel, 0, len(allModels))
 	for _, modelInfo := range allModels {
 		openaiModels = append(openaiModels, OpenAIModel{
-			ID:       modelInfo.ID,
-			Object:   "model",
-			OwnedBy:  modelInfo.Provider,
+			ID:      modelInfo.ID,
+			Object:  "model",
+			OwnedBy: modelInfo.Provider,
 		})
 	}
-	
+
 	resp := OpenAIModelList{
 		Object: "list",
 		Data:   openaiModels,
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -787,14 +846,14 @@ func (ps *ProxyServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	uptime := time.Since(ps.startTime).Seconds()
-	
+
 	resp := map[string]interface{}{
 		"status":         "ok",
 		"uptime_seconds": uptime,
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -824,7 +883,7 @@ func convertProviderResponseToOpenAI(resp *provider.ChatResponse) *OpenAIChatRes
 			FinishReason: choice.FinishReason,
 		}
 	}
-	
+
 	return &OpenAIChatResponse{
 		ID:      resp.ID,
 		Object:  resp.Object,
@@ -839,6 +898,50 @@ func convertProviderResponseToOpenAI(resp *provider.ChatResponse) *OpenAIChatRes
 	}
 }
 
+func openAIRequestToNormalized(req *OpenAIChatRequest) *models.NormalizedRequest {
+	messages := make([]models.NormalizedMessage, len(req.Messages))
+	for i, msg := range req.Messages {
+		messages[i] = models.NormalizedMessage{Role: msg.Role, Content: msg.Content}
+	}
+	return &models.NormalizedRequest{Model: req.Model, Messages: messages, MaxTokens: req.MaxTokens, Temperature: req.Temperature, Stream: req.Stream}
+}
+
+func normalizedToOpenAIResponse(model string, resp *models.NormalizedResponse) *OpenAIChatResponse {
+	return &OpenAIChatResponse{
+		ID:      fmt.Sprintf("chatcmpl_%d", time.Now().UnixNano()),
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   model,
+		Choices: []OpenAIChoice{{Index: 0, Message: OpenAIMessage{Role: "assistant", Content: resp.Content}, FinishReason: string(resp.FinishReason)}},
+		Usage:   OpenAIUsage{PromptTokens: resp.Usage.PromptTokens, CompletionTokens: resp.Usage.CompletionTokens, TotalTokens: resp.Usage.TotalTokens},
+	}
+}
+
+func comboHTTPStatus(err error) int {
+	var comboErr *router.ComboError
+	if errors.As(err, &comboErr) && comboErr.StatusCode != 0 {
+		return comboErr.StatusCode
+	}
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "malformed") || strings.Contains(msg, "unsupported") {
+		return http.StatusBadRequest
+	}
+	if strings.Contains(msg, "authentication") || strings.Contains(msg, "expired") {
+		return http.StatusUnauthorized
+	}
+	if strings.Contains(msg, "rate limit") || strings.Contains(msg, "quota exhausted") {
+		return http.StatusTooManyRequests
+	}
+	return http.StatusServiceUnavailable
+}
+
+func anthropicErrorType(status int) string {
+	if status >= 400 && status < 500 {
+		return "invalid_request_error"
+	}
+	return "service_unavailable"
+}
+
 func getClientIP(r *http.Request) string {
 	// Check X-Forwarded-For header first
 	xff := r.Header.Get("X-Forwarded-For")
@@ -846,13 +949,13 @@ func getClientIP(r *http.Request) string {
 		ips := strings.Split(xff, ",")
 		return strings.TrimSpace(ips[0])
 	}
-	
+
 	// Check X-Real-IP header
 	xri := r.Header.Get("X-Real-IP")
 	if xri != "" {
 		return xri
 	}
-	
+
 	// Fall back to RemoteAddr
 	ip := r.RemoteAddr
 	if idx := strings.LastIndex(ip, ":"); idx != -1 {
@@ -871,30 +974,30 @@ type anthropicStreamWriter struct {
 func (w *anthropicStreamWriter) Write(p []byte) (int, error) {
 	// Parse OpenAI SSE format and convert to Anthropic format
 	lines := strings.Split(string(p), "\n")
-	
+
 	for _, line := range lines {
 		if strings.HasPrefix(line, "data: ") {
 			data := strings.TrimPrefix(line, "data: ")
-			
+
 			if data == "[DONE]" {
 				// Skip [DONE] - we'll send message_stop separately
 				continue
 			}
-			
+
 			// Parse OpenAI chunk
 			var chunk OpenAIStreamChunk
 			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 				continue
 			}
-			
+
 			// Convert to Anthropic events
 			if len(chunk.Choices) > 0 {
 				choice := chunk.Choices[0]
-				
+
 				if choice.Delta != nil && choice.Delta.Content != "" {
 					// Apply reverse filter
 					content := w.filterEngine.ReverseFilter(choice.Delta.Content)
-					
+
 					// Send content_block_delta event
 					fmt.Fprintf(w.ResponseWriter, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%s}}\n\n", jsonEscape(content))
 					if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
@@ -904,7 +1007,7 @@ func (w *anthropicStreamWriter) Write(p []byte) (int, error) {
 			}
 		}
 	}
-	
+
 	return len(p), nil
 }
 

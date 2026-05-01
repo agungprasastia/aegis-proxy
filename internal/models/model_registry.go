@@ -146,6 +146,66 @@ var Registry = map[string]ModelInfo{
 		Provider: ProviderWavespeed,
 		Tier:     "standard",
 	},
+	"deepseek-v3": {
+		ID:       "deepseek-v3",
+		Name:     "DeepSeek V3",
+		Provider: ProviderDeepSeek,
+		Tier:     "apikey",
+	},
+	"deepseek-r1": {
+		ID:       "deepseek-r1",
+		Name:     "DeepSeek R1",
+		Provider: ProviderDeepSeek,
+		Tier:     "apikey",
+	},
+	"groq-default": {
+		ID:       "groq-default",
+		Name:     "Groq Fast Inference",
+		Provider: ProviderGroq,
+		Tier:     "apikey",
+	},
+	"glm-5-apikey": {
+		ID:       "glm-5-apikey",
+		Name:     "GLM-5",
+		Provider: ProviderGLM,
+		Tier:     "apikey",
+	},
+	"glm-4.7": {
+		ID:       "glm-4.7",
+		Name:     "GLM-4.7",
+		Provider: ProviderGLM,
+		Tier:     "apikey",
+	},
+	"minimax-m2.7": {
+		ID:       "minimax-m2.7",
+		Name:     "MiniMax M2.7",
+		Provider: ProviderMiniMax,
+		Tier:     "apikey",
+	},
+	"minimax-m2.5-apikey": {
+		ID:       "minimax-m2.5-apikey",
+		Name:     "MiniMax M2.5",
+		Provider: ProviderMiniMax,
+		Tier:     "apikey",
+	},
+	"mistral-large": {
+		ID:       "mistral-large",
+		Name:     "Mistral Large",
+		Provider: ProviderMistral,
+		Tier:     "apikey",
+	},
+	"codestral": {
+		ID:       "codestral",
+		Name:     "Codestral",
+		Provider: ProviderMistral,
+		Tier:     "apikey",
+	},
+	"grok-default": {
+		ID:       "grok-default",
+		Name:     "Grok",
+		Provider: ProviderXAI,
+		Tier:     "apikey",
+	},
 }
 
 func GetModelInfo(id string) (ModelInfo, bool) {
