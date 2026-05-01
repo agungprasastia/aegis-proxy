@@ -6,6 +6,7 @@
   import ProxyPage from './lib/ProxyPage.svelte';
   import LogsPage from './lib/LogsPage.svelte';
   import ApiKeyPage from './lib/ApiKeyPage.svelte';
+  import ProvidersPage from './lib/ProvidersPage.svelte';
   import SettingsPage from './lib/SettingsPage.svelte';
   import FiltersPage from './lib/FiltersPage.svelte';
   import LoginPage from './lib/LoginPage.svelte';
@@ -13,7 +14,26 @@
   import { auth } from './lib/stores/auth.js';
   import { api } from './lib/api.js';
 
-  let activeRoute = $state('Dashboard');
+  const routePaths = {
+    Dashboard: '/dashboard',
+    Accounts: '/dashboard/accounts',
+    Models: '/dashboard/models',
+    'API Key': '/dashboard/api-key',
+    Providers: '/dashboard/providers',
+    Proxy: '/dashboard/proxy',
+    Filters: '/dashboard/filters',
+    Logs: '/dashboard/logs',
+    Settings: '/dashboard/settings',
+  };
+
+  const pathRoutes = Object.fromEntries(Object.entries(routePaths).map(([name, path]) => [path, name]));
+
+  function routeFromPath() {
+    if (typeof window === 'undefined') return 'Dashboard';
+    return pathRoutes[window.location.pathname] || 'Dashboard';
+  }
+
+  let activeRoute = $state(routeFromPath());
   let isMobileMenuOpen = $state(false);
   let proxyStatus = $state('checking');
   let theme = $state(typeof localStorage !== 'undefined' ? (localStorage.getItem('aegis_theme') || 'dark') : 'dark');
@@ -87,6 +107,7 @@
       label: 'PROXY',
       items: [
         { name: 'API Key', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 18v3c0 .6.4 1 1 1h4v-3h3v-3h2l1.4-1.4a6.5 6.5 0 1 0-4-4Z"/><circle cx="16.5" cy="7.5" r=".5"/></svg>' },
+        { name: 'Providers', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 9h.01"/><path d="M7 13h.01"/><path d="M17 9h.01"/><path d="M17 13h.01"/></svg>' },
         { name: 'Proxy', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/></svg>' },
         { name: 'Filters', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>' },
       ]
