@@ -36,8 +36,8 @@ func TestAutoMigrateFreshDBCreatesAllTables(t *testing.T) {
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&versions); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if versions != 9 {
-		t.Fatalf("schema_migrations count = %d, want 9", versions)
+	if versions != 10 {
+		t.Fatalf("schema_migrations count = %d, want 10", versions)
 	}
 }
 
@@ -101,7 +101,7 @@ func TestAutoMigrateSchemaQueryable(t *testing.T) {
 		`INSERT INTO combos (name, targets, created_at, updated_at) VALUES ('standard', '["kiro"]', ?, ?)`,
 		`INSERT INTO api_keys (provider, key, status, created_at) VALUES ('kiro', 'encrypted-key', 'active', ?)`,
 		`INSERT INTO oauth_tokens (provider, access_token, refresh_token, expires_at, created_at) VALUES ('kiro', 'encrypted-access', 'encrypted-refresh', ?, ?)`,
-		`INSERT INTO quotas (provider, account_id, used_tokens, total_tokens, reset_at, created_at) VALUES ('kiro', NULL, 1, 100, ?, ?)`,
+		`INSERT INTO quotas (provider, account_id, used_tokens, total_tokens, reset_at, created_at) VALUES ('kiro', 'account-1', 1, 100, ?, ?)`,
 		`INSERT INTO sync_metadata (last_sync_at, last_sync_hash, created_at) VALUES (?, 'hash', ?)`,
 	}
 	args := [][]any{

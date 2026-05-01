@@ -84,12 +84,12 @@ func AutoMigrate(db *sql.DB) error {
 		{8, `CREATE TABLE IF NOT EXISTS quotas (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			provider TEXT NOT NULL,
-			account_id INTEGER,
+			account_id TEXT NOT NULL,
 			used_tokens INTEGER NOT NULL DEFAULT 0,
 			total_tokens INTEGER NOT NULL DEFAULT 0,
 			reset_at DATETIME,
 			created_at DATETIME NOT NULL,
-			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
+			UNIQUE(provider, account_id)
 		)`},
 		{9, `CREATE TABLE IF NOT EXISTS sync_metadata (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +97,7 @@ func AutoMigrate(db *sql.DB) error {
 			last_sync_hash TEXT,
 			created_at DATETIME NOT NULL
 		)`},
+		{10, `CREATE UNIQUE INDEX IF NOT EXISTS idx_quotas_provider_account ON quotas(provider, account_id)`},
 	}
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (

@@ -55,6 +55,7 @@ func (ds *DashboardServer) Handler() http.Handler {
 	mux.HandleFunc("/api/providers/apikey", authMiddleware(http.HandlerFunc(ds.apiServer.HandleAPIKeyProviders)).ServeHTTP)
 	mux.HandleFunc("/api/providers/apikey/test", authMiddleware(http.HandlerFunc(ds.apiServer.HandleTestAPIKeyProvider)).ServeHTTP)
 	mux.HandleFunc("/api/providers/apikey/", authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteAPIKeyProvider)).ServeHTTP)
+	mux.HandleFunc("/api/quota/", ds.handleQuotaRoute(authMiddleware))
 	mux.HandleFunc("/api/settings", ds.handleSettingsRoute(authMiddleware))
 
 	// Batch endpoints
@@ -79,6 +80,8 @@ func (ds *DashboardServer) Handler() http.Handler {
 	mux.HandleFunc("/api/filters", ds.handleFiltersRoute(authMiddleware))
 	mux.HandleFunc("/api/filters/", ds.handleFilterByIDRoute(authMiddleware))
 	mux.HandleFunc("/api/filter-templates", authMiddleware(http.HandlerFunc(ds.apiServer.HandleListFilterTemplates)).ServeHTTP)
+	mux.HandleFunc("/api/combos", ds.handleCombosRoute(authMiddleware))
+	mux.HandleFunc("/api/combos/", ds.handleComboByIDRoute(authMiddleware))
 
 	mux.HandleFunc("/health", ds.handleHealth)
 	mux.HandleFunc("/", ds.handleStatic)
@@ -165,6 +168,22 @@ func (ds *DashboardServer) handleSettingsRoute(authMiddleware func(http.Handler)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
+	}
+}
+
+func (ds *DashboardServer) handleQuotaRoute(authMiddleware func(http.Handler) http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/quota/")
+		parts := strings.Split(strings.Trim(path, "/"), "/")
+		if len(parts) == 1 {
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleListQuotas)).ServeHTTP(w, r)
+			return
+		}
+		if len(parts) == 2 {
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleGetQuota)).ServeHTTP(w, r)
+			return
+		}
+		http.NotFound(w, r)
 	}
 }
 
@@ -258,6 +277,32 @@ func (ds *DashboardServer) handleFilterByIDRoute(authMiddleware func(http.Handle
 			authMiddleware(http.HandlerFunc(ds.apiServer.HandleUpdateFilter)).ServeHTTP(w, r)
 		case http.MethodDelete:
 			authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteFilter)).ServeHTTP(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func (ds *DashboardServer) handleCombosRoute(authMiddleware func(http.Handler) http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleListCombos)).ServeHTTP(w, r)
+		case http.MethodPost:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleAddCombo)).ServeHTTP(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+func (ds *DashboardServer) handleComboByIDRoute(authMiddleware func(http.Handler) http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleUpdateCombo)).ServeHTTP(w, r)
+		case http.MethodDelete:
+			authMiddleware(http.HandlerFunc(ds.apiServer.HandleDeleteCombo)).ServeHTTP(w, r)
 		default:
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
