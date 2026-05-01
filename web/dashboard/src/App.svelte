@@ -4,6 +4,7 @@
   import BatchProgressPage from './lib/BatchProgressPage.svelte';
   import ModelsPage from './lib/ModelsPage.svelte';
   import ProxyPage from './lib/ProxyPage.svelte';
+  import CombosPage from './lib/CombosPage.svelte';
   import LogsPage from './lib/LogsPage.svelte';
   import ApiKeyPage from './lib/ApiKeyPage.svelte';
   import ProvidersPage from './lib/ProvidersPage.svelte';
@@ -22,6 +23,7 @@
     Providers: '/dashboard/providers',
     Proxy: '/dashboard/proxy',
     Filters: '/dashboard/filters',
+    Combos: '/dashboard/combos',
     Logs: '/dashboard/logs',
     Settings: '/dashboard/settings',
   };
@@ -110,6 +112,7 @@
         { name: 'Providers', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 9h.01"/><path d="M7 13h.01"/><path d="M17 9h.01"/><path d="M17 13h.01"/></svg>' },
         { name: 'Proxy', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M2 12h2"/><path d="M20 12h2"/></svg>' },
         { name: 'Filters', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>' },
+        { name: 'Combos', icon: '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17h6"/><path d="M14 17h6"/><path d="M10 17a2 2 0 1 0 4 0 2 2 0 0 0-4 0"/><path d="M4 7h10"/><path d="M18 7h2"/><path d="M14 7a2 2 0 1 0 4 0 2 2 0 0 0-4 0"/></svg>' },
       ]
     },
     {
@@ -129,10 +132,19 @@
   function navigate(name) {
     activeRoute = name;
     isMobileMenuOpen = false;
+    if (typeof window !== 'undefined' && routePaths[name] && window.location.pathname !== routePaths[name]) {
+      window.history.pushState({}, '', routePaths[name]);
+    }
   }
 
   function handleLogout() {
     auth.logout();
+  }
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('popstate', () => {
+      activeRoute = routeFromPath();
+    });
   }
 </script>
 
@@ -315,10 +327,14 @@
             <ProxyPage />
           {:else if activeRoute === 'Filters'}
             <FiltersPage />
+          {:else if activeRoute === 'Combos'}
+            <CombosPage />
           {:else if activeRoute === 'Logs'}
             <LogsPage />
           {:else if activeRoute === 'API Key'}
             <ApiKeyPage />
+          {:else if activeRoute === 'Providers'}
+            <ProvidersPage />
           {:else if activeRoute === 'Settings'}
             <SettingsPage />
           {:else}

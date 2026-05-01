@@ -11,6 +11,7 @@ import (
 	"github.com/aegis-proxy/aegis/internal/accounts"
 	"github.com/aegis-proxy/aegis/internal/auth"
 	"github.com/aegis-proxy/aegis/internal/batch"
+	"github.com/aegis-proxy/aegis/internal/combo"
 	"github.com/aegis-proxy/aegis/internal/config"
 	"github.com/aegis-proxy/aegis/internal/database"
 	"github.com/aegis-proxy/aegis/internal/filter"
@@ -29,13 +30,15 @@ type APIServer struct {
 	syncer       *appsync.AccountSyncer
 	pool         *proxypool.ProxyPool
 	poolConfig   *proxypool.ProxyPoolConfig
+	tester       *proxypool.ProxyTester
 	Sessions     *SessionManager
 	FilterEngine *filter.FilterEngine
 	BatchMgr     *batch.BatchManager
+	ComboService *combo.Service
 	StartTime    time.Time
 }
 
-func NewAPIServer(db *database.DB, am *accounts.AccountManager, rl *logger.RequestLogger, cfg *config.Config, pool *proxypool.ProxyPool, poolConfig *proxypool.ProxyPoolConfig) *APIServer {
+func NewAPIServer(db *database.DB, am *accounts.AccountManager, rl *logger.RequestLogger, cfg *config.Config, pool *proxypool.ProxyPool, poolConfig *proxypool.ProxyPoolConfig, tester *proxypool.ProxyTester) *APIServer {
 	// Initialize filter engine with default filters
 	filterEngine, err := filter.NewFilterEngine(filter.GetDefaultFilters())
 	if err != nil {
@@ -50,9 +53,11 @@ func NewAPIServer(db *database.DB, am *accounts.AccountManager, rl *logger.Reque
 		syncer:       appsync.NewAccountSyncer(db),
 		pool:         pool,
 		poolConfig:   poolConfig,
+		tester:       tester,
 		Sessions:     NewSessionManager(),
 		FilterEngine: filterEngine,
 		BatchMgr:     batch.NewBatchManager(am),
+		ComboService: combo.NewService(db),
 		StartTime:    time.Now(),
 	}
 }
@@ -429,7 +434,101 @@ func (s *APIServer) HandleListProxies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	proxies := s.pool.GetAllProxies()
+	for i := range proxies {
+		proxypool.NormalizeEntry(&proxies[i])
+	}
 	respondJSON(w, http.StatusOK, proxies)
+}
+
+func (s *APIServer) HandleGetProxyConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"for_kiro":               s.poolConfig.ForKiro,
+		"for_codebuddy":          s.poolConfig.ForCodeBuddy,
+		"for_wavespeed":          s.poolConfig.ForWavespeed,
+		"for_yepapi":             s.poolConfig.ForYepAPI,
+		"for_codex":              s.poolConfig.ForCodex,
+		"for_login":              s.poolConfig.ForLogin,
+		"auto_test_enabled":      s.poolConfig.AutoTestEnabled,
+		"auto_test_interval_min": s.poolConfig.AutoTestIntervalMin,
+		"auto_delete_failed":     s.poolConfig.AutoDeleteFailed,
+	})
+}
+
+func (s *APIServer) HandleUpdateProxyConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ForKiro             *bool `json:"for_kiro"`
+		ForCodeBuddy        *bool `json:"for_codebuddy"`
+		ForWavespeed        *bool `json:"for_wavespeed"`
+		ForYepAPI           *bool `json:"for_yepapi"`
+		ForCodex            *bool `json:"for_codex"`
+		ForLogin            *bool `json:"for_login"`
+		AutoTestEnabled     *bool `json:"auto_test_enabled"`
+		AutoTestIntervalMin *int  `json:"auto_test_interval_min"`
+		AutoDeleteFailed    *bool `json:"auto_delete_failed"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if req.ForKiro != nil {
+		s.poolConfig.ForKiro = *req.ForKiro
+	}
+	if req.ForCodeBuddy != nil {
+		s.poolConfig.ForCodeBuddy = *req.ForCodeBuddy
+	}
+	if req.ForWavespeed != nil {
+		s.poolConfig.ForWavespeed = *req.ForWavespeed
+	}
+	if req.ForYepAPI != nil {
+		s.poolConfig.ForYepAPI = *req.ForYepAPI
+	}
+	if req.ForCodex != nil {
+		s.poolConfig.ForCodex = *req.ForCodex
+	}
+	if req.ForLogin != nil {
+		s.poolConfig.ForLogin = *req.ForLogin
+	}
+	if req.AutoTestEnabled != nil {
+		s.poolConfig.AutoTestEnabled = *req.AutoTestEnabled
+	}
+	if req.AutoTestIntervalMin != nil && *req.AutoTestIntervalMin > 0 {
+		s.poolConfig.AutoTestIntervalMin = *req.AutoTestIntervalMin
+	}
+	if req.AutoDeleteFailed != nil {
+		s.poolConfig.AutoDeleteFailed = *req.AutoDeleteFailed
+	}
+
+	s.pool.ApplyRoutingFlags(
+		s.poolConfig.ForKiro,
+		s.poolConfig.ForCodeBuddy,
+		s.poolConfig.ForWavespeed,
+		s.poolConfig.ForYepAPI,
+		s.poolConfig.ForCodex,
+		s.poolConfig.ForLogin,
+	)
+
+	if s.tester != nil {
+		s.tester.UpdateConfig(s.poolConfig)
+	}
+
+	if err := proxypool.SaveProxyPool(s.cfg.DataDir, s.pool, s.poolConfig); err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.HandleGetProxyConfig(w, r)
 }
 
 func (s *APIServer) HandleAddProxy(w http.ResponseWriter, r *http.Request) {
@@ -466,6 +565,7 @@ func (s *APIServer) HandleAddProxy(w http.ResponseWriter, r *http.Request) {
 		ForCodex:     s.poolConfig.ForCodex,
 		ForLogin:     s.poolConfig.ForLogin,
 	}
+	proxypool.NormalizeEntry(&entry)
 
 	s.pool.AddProxy(entry)
 	proxypool.SaveProxyPool(s.cfg.DataDir, s.pool, s.poolConfig)
@@ -543,7 +643,7 @@ func (s *APIServer) HandleTestProxies(w http.ResponseWriter, r *http.Request) {
 			"error":      errMsg,
 		}
 	}
-	
+
 	proxypool.SaveProxyPool(s.cfg.DataDir, s.pool, s.poolConfig)
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -648,8 +748,6 @@ func (s *APIServer) HandleUpdateSettings(w http.ResponseWriter, r *http.Request)
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Settings updated"})
 }
-
-
 
 func respondJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -772,6 +870,7 @@ func (s *APIServer) HandleFixErrors(w http.ResponseWriter, r *http.Request) {
 		Concurrent: 1,
 		Headless:   s.cfg.AccountAddHeadless,
 		Priority:   "standard",
+		ProxyURL:   s.cfg.UpstreamProxy,
 	}
 
 	if err := s.BatchMgr.Start(errorAccounts, cfg); err != nil {
@@ -924,6 +1023,7 @@ func (s *APIServer) HandleBatchStart(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Accounts []batch.AccountInput `json:"accounts"`
+		Provider string               `json:"provider"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -949,6 +1049,8 @@ func (s *APIServer) HandleBatchStart(w http.ResponseWriter, r *http.Request) {
 		Concurrent: concurrent,
 		Headless:   s.cfg.AccountAddHeadless,
 		Priority:   priority,
+		Provider:   req.Provider,
+		ProxyURL:   s.cfg.UpstreamProxy,
 	}
 
 	if err := s.BatchMgr.Start(req.Accounts, cfg); err != nil {
@@ -1122,4 +1224,90 @@ func (s *APIServer) HandleDeleteFilter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *APIServer) HandleListCombos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	combos, err := s.ComboService.List()
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, combos)
+}
+
+func (s *APIServer) HandleAddCombo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req models.Combo
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+	if err := s.ComboService.Create(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, req)
+}
+
+func (s *APIServer) HandleUpdateCombo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id, ok := comboIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	var req models.Combo
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+		return
+	}
+	req.ID = id
+	if err := s.ComboService.Update(&req); err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, req)
+}
+
+func (s *APIServer) HandleDeleteCombo(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	id, ok := comboIDFromPath(w, r)
+	if !ok {
+		return
+	}
+	if err := s.ComboService.Delete(id); err != nil {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func comboIDFromPath(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/combos/"), "/")
+	if len(parts) == 0 || parts[0] == "" {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Combo ID required"})
+		return 0, false
+	}
+	id, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || id <= 0 {
+		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "Invalid combo ID"})
+		return 0, false
+	}
+	return id, true
 }
