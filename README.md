@@ -4,13 +4,32 @@ Self-hosted AI proxy that runs locally on your machine. Access premium AI models
 
 ## Features
 
+### Core Features
 - **OpenAI + Anthropic Compatible** — Drop-in replacement at `localhost:3130`. Works with Cursor, VS Code, Continue, Cline, and any OpenAI/Anthropic compatible tool.
 - **20+ AI Models** — Claude, Gemini, GPT, DeepSeek, GLM, Kimi and more through a unified endpoint.
 - **AI Image Generation** — Generate images via `POST /v1/images/generations` using Canva AI. OpenAI DALL-E compatible endpoint.
 - **Three Tiers** — Standard models (Claude family via Kiro), MAX models (GPT-5, Gemini, Opus 4.6, DeepSeek, Kimi via CodeBuddy), and Canva (image generation).
-- **Web Dashboard** — Manage accounts, view logs, monitor credits, and configure settings at `localhost:3131`.
+- **Web Dashboard** — Manage accounts, view logs, monitor credits, and configure settings at `localhost:3130/dashboard`.
 - **Built-in Chat UI** — Chat interface at `localhost:3130/chat` with streaming support.
-- **Smart Routing** — Sticky account rotation, automatic error recovery, multi-step fallback degradation.
+
+### Smart Routing & Fallback (NEW)
+- **Combo Chains** — Create ordered fallback chains across providers and models. Automatically switch from subscription → pay-as-you-go → free models.
+- **Intelligent Fallback** — Deterministic fallback on 429, 5xx, timeout, auth expired, and quota exhausted. Aborts on client 4xx errors.
+- **Sticky Sessions** — Consistent account assignment per client with automatic rotation on failure.
+- **Format Translation** — Seamless OpenAI ↔ Anthropic ↔ Gemini format conversion. Send OpenAI requests to Anthropic models and vice versa.
+
+### API-Key Providers (NEW)
+- **10 Direct Integrations** — OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Groq, GLM, MiniMax, Mistral, xAI.
+- **Encrypted Storage** — API keys encrypted at rest with connectivity testing.
+- **Provider Dashboard** — Add, test, and remove API-key providers from the web UI.
+
+### OAuth & Quota (NEW)
+- **OAuth2 PKCE** — Real OAuth flows for Claude Code, Codex, GitHub Copilot, and Cursor (no browser automation).
+- **Token Refresh** — Automatic token refresh with secure storage.
+- **Quota Tracking** — Real-time per-provider usage tracking with reset countdowns and advisory limits.
+- **Quota Dashboard** — Live counters showing used/remaining tokens and time until reset.
+
+### Infrastructure
 - **Proxy Pool** — Route upstream requests through HTTP/SOCKS5 proxies with per-provider routing, latency-based selection, and auto-testing.
 - **Content Filters** — 31 obfuscation rules with template system (basic, aggressive, minimal). Prevents upstream content filtering from blocking requests.
 - **Account Warmup** — Validates new accounts immediately after login with a test request.
@@ -536,7 +555,54 @@ aegis setup    # Re-initialize the auth system
 - **Database:** SQLite (modernc.org/sqlite — pure Go, no CGO)
 - **Browser Automation:** Python + Camoufox (stealth Firefox)
 - **Dashboard:** Svelte
-- **Security:** bcrypt password hashing
+- **Security:** bcrypt password hashing, OAuth2 PKCE
+
+## Roadmap
+
+### ✅ Completed (Wave 1-4)
+- [x] Normalized provider interface and message schema
+- [x] Database migrations for combos, quotas, API keys, OAuth tokens
+- [x] Go test infrastructure
+- [x] Unified single-port server (proxy + dashboard on port 3130)
+- [x] 10 API-key provider integrations (OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Groq, GLM, MiniMax, Mistral, xAI)
+- [x] Combo CRUD engine with ordered fallback chains
+- [x] Fallback router with deterministic rules (429, 5xx, timeout, auth expired, quota exhausted)
+- [x] Dashboard Providers page (API-key management UI)
+- [x] Quota tracking engine with reset timers
+- [x] Dashboard Combos page (create/edit/delete combos)
+- [x] OpenAI ↔ Anthropic format translation
+- [x] Gemini translation adapter
+- [x] Dashboard Quota page with live counters
+- [x] OAuth2 PKCE engine with token refresh
+- [x] OAuth providers: Claude Code, Codex, GitHub Copilot, Cursor
+
+### 🚧 In Progress (Wave 5)
+- [ ] RTK compression engine for tool_result payloads
+- [ ] RTK filters (git-diff, grep, ls, tree, find, log, smart-truncate)
+- [ ] Dashboard RTK controls and compression stats
+- [ ] Cloud sync client (encrypt/export/import)
+- [ ] Cloud sync REST server
+- [ ] Dashboard Sync settings page
+
+### 📋 Planned (Wave Final)
+- [ ] Plan compliance audit
+- [ ] Code quality review
+- [ ] Real manual QA with Playwright
+- [ ] Scope fidelity check
+
+### 🔮 Future Enhancements
+- [ ] Multimodal support (image/audio) in format translation
+- [ ] Streaming support for combo fallback chains
+- [ ] Provider-specific quota APIs integration
+- [ ] Multi-user/team features
+- [ ] Advanced analytics and usage insights
+- [ ] Custom provider plugins
+- [ ] Rate limiting per client
+- [ ] Request caching layer
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
