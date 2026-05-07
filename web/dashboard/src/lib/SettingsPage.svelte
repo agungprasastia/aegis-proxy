@@ -12,6 +12,9 @@
   let currentPassword = $state('');
   let newPassword = $state('');
   let confirmPassword = $state('');
+  let upstreamProxy = $state('');
+  let rtkEnabled = $state(true);
+  let syncEndpoint = $state('');
   
   let networkSettings = $state({
     proxy_host: '127.0.0.1',
@@ -24,7 +27,9 @@
 
   const tabs = [
     { id: 'general', label: 'General' },
-    { id: 'network', label: 'Network' }
+    { id: 'network', label: 'Network' },
+    { id: 'rtk', label: 'RTK' },
+    { id: 'sync', label: 'Sync' }
   ];
   let activeTab = $state('general');
   let ipWhitelistText = $state('');
@@ -35,6 +40,7 @@
       error = null;
       const res = await api.get('/api/settings');
       if (res) {
+        upstreamProxy = res.upstream_proxy || '';
         networkSettings = {
           proxy_host: res.proxy_host || '127.0.0.1',
           proxy_port: res.proxy_port || 3130,
@@ -43,6 +49,8 @@
           expose_to_network: res.expose_to_network || false,
           whitelisted_ips: res.whitelisted_ips || []
         };
+        rtkEnabled = res.rtk_enabled ?? true;
+        syncEndpoint = res.sync_endpoint || '';
         ipWhitelistText = (res.whitelisted_ips || []).join(', ');
       }
     } catch (err) {
@@ -94,6 +102,44 @@
       toast.success('Network settings saved successfully');
     } catch (err) {
       toast.error(err.message || 'Failed to save network settings');
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveUpstreamProxy() {
+    try {
+      saving = true;
+      await api.put('/api/settings', {
+        upstream_proxy: upstreamProxy
+      });
+      toast.success('Upstream proxy saved successfully');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save upstream proxy');
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveRTKSettings() {
+    try {
+      saving = true;
+      await api.put('/api/settings', { rtk_enabled: rtkEnabled });
+      toast.success('RTK settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save RTK settings');
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function saveSyncSettings() {
+    try {
+      saving = true;
+      await api.put('/api/settings', { sync_endpoint: syncEndpoint });
+      toast.success('Sync settings saved');
+    } catch (err) {
+      toast.error(err.message || 'Failed to save sync settings');
     } finally {
       saving = false;
     }
@@ -173,6 +219,39 @@
                     Saving...
                   {:else}
                     Update Password
+                  {/if}
+                </button>
+              </div>
+            </div>
+
+            <!-- Upstream Proxy Section -->
+            <div class="border-t border-border pt-6">
+              <h2 class="text-lg font-medium text-white mb-1">Upstream Proxy</h2>
+              <p class="text-sm text-text-muted mb-4">Configure HTTP/SOCKS5 proxy for browser automation (account login). Leave empty to connect directly.</p>
+              
+              <div class="space-y-4 max-w-md">
+                <div>
+                  <label for="upstreamProxy" class="block text-sm font-medium text-text-muted mb-1">Proxy URL</label>
+                  <input 
+                    id="upstreamProxy"
+                    type="text" 
+                    bind:value={upstreamProxy}
+                    placeholder="http://113.160.132.26:8080 or socks5://user:pass@host:port"
+                    class="w-full bg-bg-base border border-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-sm"
+                  />
+                  <p class="text-xs text-text-muted mt-1">Format: http://host:port or socks5://user:pass@host:port</p>
+                </div>
+                
+                <button 
+                  class="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors shadow-[0_0_15px_rgba(102,126,234,0.3)] disabled:opacity-50 flex items-center gap-2"
+                  onclick={saveUpstreamProxy}
+                  disabled={saving}
+                >
+                  {#if saving}
+                    <div class="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                    Saving...
+                  {:else}
+                    Save Proxy
                   {/if}
                 </button>
               </div>
@@ -272,6 +351,63 @@
                   {:else}
                     Save Network Settings
                   {/if}
+                </button>
+              </div>
+            </div>
+          </div>
+        {:else if activeTab === 'rtk'}
+          <div class="space-y-6 animate-in fade-in duration-300">
+            <div>
+              <h2 class="text-lg font-medium text-white mb-1">RTK Compression</h2>
+              <p class="text-sm text-text-muted mb-4">Compress recognized tool output before upstream requests. Unknown payloads pass through unchanged.</p>
+              <div class="space-y-4 max-w-2xl">
+                <label class="flex items-center gap-3 cursor-pointer p-4 rounded-lg bg-bg-base border border-border hover:border-accent/50 transition-colors">
+                  <div class="relative">
+                    <input type="checkbox" class="sr-only" bind:checked={rtkEnabled} />
+                    <div class="block w-12 h-7 bg-bg-sidebar border border-border rounded-full transition-colors {rtkEnabled ? 'bg-accent/20 border-accent' : ''}"></div>
+                    <div class="dot absolute left-1 top-1 bg-text-muted w-5 h-5 rounded-full transition-transform {rtkEnabled ? 'translate-x-5 bg-accent' : ''}"></div>
+                  </div>
+                  <div>
+                    <div class="font-medium text-white">Enable RTK</div>
+                    <div class="text-xs text-text-muted">Filters: git-diff, grep, ls, tree, find, log, smart-truncate.</div>
+                  </div>
+                </label>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div class="rounded-lg bg-bg-base border border-border p-4">
+                    <div class="text-xs uppercase tracking-wider text-text-muted mb-1">Status</div>
+                    <div class="font-medium {rtkEnabled ? 'text-emerald-400' : 'text-yellow-400'}">{rtkEnabled ? 'Active' : 'Disabled'}</div>
+                  </div>
+                  <div class="rounded-lg bg-bg-base border border-border p-4">
+                    <div class="text-xs uppercase tracking-wider text-text-muted mb-1">Mode</div>
+                    <div class="font-medium text-white">Safe shrink-only</div>
+                  </div>
+                  <div class="rounded-lg bg-bg-base border border-border p-4">
+                    <div class="text-xs uppercase tracking-wider text-text-muted mb-1">Unknown</div>
+                    <div class="font-medium text-white">Passthrough</div>
+                  </div>
+                </div>
+
+                <button class="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2" onclick={saveRTKSettings} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save RTK Settings'}
+                </button>
+              </div>
+            </div>
+          </div>
+        {:else if activeTab === 'sync'}
+          <div class="space-y-6 animate-in fade-in duration-300">
+            <div>
+              <h2 class="text-lg font-medium text-white mb-1">Cloud Sync</h2>
+              <p class="text-sm text-text-muted mb-4">Optional personal config sync. Local operation never requires cloud sync.</p>
+              <div class="space-y-4 max-w-2xl">
+                <div class="rounded-lg border border-yellow-500/20 bg-yellow-500/10 p-4 text-sm text-yellow-100">Secrets are encrypted before sync. Browser cookies/session artifacts are not synced by default.</div>
+                <div>
+                  <label for="syncEndpoint" class="block text-sm font-medium text-text-muted mb-1">Sync Endpoint</label>
+                  <input id="syncEndpoint" type="url" bind:value={syncEndpoint} placeholder="https://sync.example.com" class="w-full bg-bg-base border border-border rounded-lg px-3 py-2 text-white placeholder:text-border focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent transition-colors font-mono text-sm" />
+                  <p class="text-xs text-text-muted mt-1">Leave empty to keep sync disabled.</p>
+                </div>
+                <button class="px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 flex items-center gap-2" onclick={saveSyncSettings} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save Sync Settings'}
                 </button>
               </div>
             </div>

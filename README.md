@@ -29,6 +29,12 @@ Self-hosted AI proxy that runs locally on your machine. Access premium AI models
 - **Quota Tracking** — Real-time per-provider usage tracking with reset countdowns and advisory limits.
 - **Quota Dashboard** — Live counters showing used/remaining tokens and time until reset.
 
+### RTK & Cloud Sync (NEW)
+- **RTK Compression** — Shrink recognized tool outputs before upstream requests. Supports git-diff, grep, ls, tree, find, log, and safe truncation.
+- **Safe Passthrough** — Unknown or unsafe payloads are left unchanged; compression only applies when output shrinks.
+- **Cloud Sync** — Optional personal config sync with encrypted payload export/import.
+- **Sync Dashboard** — Configure RTK and cloud sync from Settings.
+
 ### Infrastructure
 - **Proxy Pool** — Route upstream requests through HTTP/SOCKS5 proxies with per-provider routing, latency-based selection, and auto-testing.
 - **Content Filters** — 31 obfuscation rules with template system (basic, aggressive, minimal). Prevents upstream content filtering from blocking requests.
@@ -559,7 +565,7 @@ aegis setup    # Re-initialize the auth system
 
 ## Roadmap
 
-### ✅ Completed (Wave 1-4)
+### ✅ Completed (Wave 1-5)
 - [x] Normalized provider interface and message schema
 - [x] Database migrations for combos, quotas, API keys, OAuth tokens
 - [x] Go test infrastructure
@@ -575,14 +581,12 @@ aegis setup    # Re-initialize the auth system
 - [x] Dashboard Quota page with live counters
 - [x] OAuth2 PKCE engine with token refresh
 - [x] OAuth providers: Claude Code, Codex, GitHub Copilot, Cursor
-
-### 🚧 In Progress (Wave 5)
-- [ ] RTK compression engine for tool_result payloads
-- [ ] RTK filters (git-diff, grep, ls, tree, find, log, smart-truncate)
-- [ ] Dashboard RTK controls and compression stats
-- [ ] Cloud sync client (encrypt/export/import)
-- [ ] Cloud sync REST server
-- [ ] Dashboard Sync settings page
+- [x] RTK compression engine for tool_result payloads
+- [x] RTK filters (git-diff, grep, ls, tree, find, log, smart-truncate)
+- [x] Dashboard RTK controls and compression stats
+- [x] Cloud sync client (encrypt/export/import)
+- [x] Cloud sync REST server
+- [x] Dashboard Sync settings page
 
 ### 📋 Planned (Wave Final)
 - [ ] Plan compliance audit

@@ -671,6 +671,8 @@ func (s *APIServer) HandleGetSettings(w http.ResponseWriter, r *http.Request) {
 		"expose_to_network":      s.cfg.ExposeToNetwork,
 		"whitelist_enabled":      s.cfg.WhitelistEnabled,
 		"whitelisted_ips":        s.cfg.WhitelistedIPs,
+		"rtk_enabled":            s.cfg.RTKEnabled,
+		"sync_endpoint":          s.cfg.SyncEndpoint,
 	}
 
 	respondJSON(w, http.StatusOK, settings)
@@ -706,6 +708,12 @@ func (s *APIServer) HandleUpdateSettings(w http.ResponseWriter, r *http.Request)
 	}
 	if v, ok := req["upstream_proxy"].(string); ok {
 		s.cfg.UpstreamProxy = v
+	}
+	if v, ok := req["rtk_enabled"].(bool); ok {
+		s.cfg.RTKEnabled = v
+	}
+	if v, ok := req["sync_endpoint"].(string); ok {
+		s.cfg.SyncEndpoint = v
 	}
 	if v, ok := req["account_add_concurrent"].(float64); ok {
 		s.cfg.AccountAddConcurrent = int(v)

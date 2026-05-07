@@ -11,29 +11,31 @@ import (
 )
 
 type Config struct {
-	mu                  sync.RWMutex
-	ProxyHost           string          `json:"proxy_host"`
-	ProxyPort           int             `json:"proxy_port"`
-	DashboardHost       string          `json:"dashboard_host"`
-	DashboardPort       int             `json:"dashboard_port"`
-	APIKey              string          `json:"api_key"`
-	DashboardPassword   string          `json:"dashboard_password"`
-	DashboardPasswordHash string        `json:"dashboard_password_hash"`
-	LicenseKey          string          `json:"license_key"`
-	DBPath              string          `json:"db_path"`
-	UpstreamProxy       string          `json:"upstream_proxy"`
-	AccountAddHeadless  bool            `json:"account_add_headless"`
-	AccountAddConcurrent int           `json:"account_add_concurrent"`
-	AccountAddPriority  string          `json:"account_add_priority"`
-	AccountAddParallel  int             `json:"account_add_parallel"`
-	ExposeToNetwork     bool            `json:"expose_to_network"`
-	WhitelistEnabled    bool            `json:"whitelist_enabled"`
-	WhitelistedIPs      []string        `json:"whitelisted_ips"`
-	DataDir             string          `json:"data_dir"`
-	FilePath            string          `json:"-"`
-	FilterMode          string          `json:"filter_mode"`
-	LocalFilters        []FilterRule    `json:"local_filters"`
-	FilterTemplates     []string        `json:"filter_templates"`
+	mu                    sync.RWMutex
+	ProxyHost             string       `json:"proxy_host"`
+	ProxyPort             int          `json:"proxy_port"`
+	DashboardHost         string       `json:"dashboard_host"`
+	DashboardPort         int          `json:"dashboard_port"`
+	APIKey                string       `json:"api_key"`
+	DashboardPassword     string       `json:"dashboard_password"`
+	DashboardPasswordHash string       `json:"dashboard_password_hash"`
+	LicenseKey            string       `json:"license_key"`
+	DBPath                string       `json:"db_path"`
+	UpstreamProxy         string       `json:"upstream_proxy"`
+	AccountAddHeadless    bool         `json:"account_add_headless"`
+	AccountAddConcurrent  int          `json:"account_add_concurrent"`
+	AccountAddPriority    string       `json:"account_add_priority"`
+	AccountAddParallel    int          `json:"account_add_parallel"`
+	ExposeToNetwork       bool         `json:"expose_to_network"`
+	WhitelistEnabled      bool         `json:"whitelist_enabled"`
+	WhitelistedIPs        []string     `json:"whitelisted_ips"`
+	DataDir               string       `json:"data_dir"`
+	FilePath              string       `json:"-"`
+	FilterMode            string       `json:"filter_mode"`
+	LocalFilters          []FilterRule `json:"local_filters"`
+	FilterTemplates       []string     `json:"filter_templates"`
+	RTKEnabled            bool         `json:"rtk_enabled"`
+	SyncEndpoint          string       `json:"sync_endpoint"`
 }
 
 // FilterRule represents a filter rule for config persistence
@@ -73,6 +75,8 @@ func DefaultConfig() *Config {
 		FilterMode:         "aggressive",
 		LocalFilters:       []FilterRule{},
 		FilterTemplates:    []string{"aggressive"},
+		RTKEnabled:         true,
+		SyncEndpoint:       "",
 	}
 }
 
