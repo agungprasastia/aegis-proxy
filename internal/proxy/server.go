@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aegis-proxy/aegis/internal/accounts"
+	"github.com/aegis-proxy/aegis/internal/combo"
 	"github.com/aegis-proxy/aegis/internal/config"
 	"github.com/aegis-proxy/aegis/internal/dashboard"
 	"github.com/aegis-proxy/aegis/internal/logger"
@@ -61,6 +62,9 @@ func NewProxyServer(cfg *config.Config, accountMgr *accounts.AccountManager, req
 	}
 
 	ps.router = router.NewRouter(ps.providers, accountMgr)
+	if accountMgr != nil {
+		ps.router.SetComboService(combo.NewService(accountMgr.DB()))
+	}
 
 	// Inject proxy pool into providers that support it
 	type ProxyPoolSetter interface {

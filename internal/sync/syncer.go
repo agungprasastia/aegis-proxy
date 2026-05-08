@@ -86,7 +86,7 @@ func (s *AccountSyncer) syncAccount(account *models.Account) error {
 		return s.syncKiroAccount(ctx, account)
 	case models.ProviderCodeBuddy:
 		return s.syncCodeBuddyAccount(ctx, account)
-	case models.ProviderWindsurf, models.ProviderCanva, models.ProviderYepAPI, models.ProviderCodex, models.ProviderWavespeed:
+	case models.ProviderWindsurf, models.ProviderCanva, models.ProviderCodex, models.ProviderWavespeed:
 		return s.syncGenericAccount(ctx, account)
 	default:
 		return fmt.Errorf("unknown provider: %s", account.Provider)

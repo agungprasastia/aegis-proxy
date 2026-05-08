@@ -116,12 +116,6 @@ var Registry = map[string]ModelInfo{
 		Provider: ProviderCanva,
 		Tier:     "standard",
 	},
-	"yepapi-default": {
-		ID:       "yepapi-default",
-		Name:     "YepAPI Default",
-		Provider: ProviderYepAPI,
-		Tier:     "standard",
-	},
 	"codex-default": {
 		ID:       "codex-default",
 		Name:     "Codex Default",

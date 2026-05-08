@@ -44,8 +44,8 @@
         account_add_priority: priority
       });
 
-      // Start batch login
-      await api.post('/api/batch/start', { accounts });
+      // Start batch login — pass provider so only this provider runs
+      await api.post('/api/batch/start', { accounts, provider: provider.toLowerCase() });
 
       // Navigate to progress page
       show = false;

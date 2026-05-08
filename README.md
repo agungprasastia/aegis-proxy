@@ -431,8 +431,7 @@ aegis-proxy/
 │   │   ├── windsurf/                    # Windsurf provider
 │   │   ├── canva/                       # Canva provider (Image generation)
 │   │   ├── wavespeed/                   # Wavespeed provider
-│   │   ├── yepapi/                      # YepAPI provider
-│   │   └── codex/                       # Codex provider
+	│   │   └── codex/                       # Codex provider
 │   ├── proxy/
 │   │   ├── server.go                    # Proxy server
 │   │   ├── handlers.go                  # Request handlers (real provider calls)

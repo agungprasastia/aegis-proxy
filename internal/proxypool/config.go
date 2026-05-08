@@ -10,16 +10,15 @@ import (
 // ProxyPoolConfig represents the configuration for the proxy pool
 // This matches the enowxai proxies.json format exactly
 type ProxyPoolConfig struct {
-	Proxies              []ProxyEntry `json:"proxies"`
-	ForKiro              bool         `json:"for_kiro"`
-	ForCodeBuddy         bool         `json:"for_codebuddy"`
-	ForWavespeed         bool         `json:"for_wavespeed"`
-	ForYepAPI            bool         `json:"for_yepapi"`
-	ForCodex             bool         `json:"for_codex"`
-	ForLogin             bool         `json:"for_login"`
-	AutoTestEnabled      bool         `json:"auto_test_enabled"`
-	AutoTestIntervalMin  int          `json:"auto_test_interval_min"`
-	AutoDeleteFailed     bool         `json:"auto_delete_failed"`
+	Proxies             []ProxyEntry `json:"proxies"`
+	ForKiro             bool         `json:"for_kiro"`
+	ForCodeBuddy        bool         `json:"for_codebuddy"`
+	ForWavespeed        bool         `json:"for_wavespeed"`
+	ForCodex            bool         `json:"for_codex"`
+	ForLogin            bool         `json:"for_login"`
+	AutoTestEnabled     bool         `json:"auto_test_enabled"`
+	AutoTestIntervalMin int          `json:"auto_test_interval_min"`
+	AutoDeleteFailed    bool         `json:"auto_delete_failed"`
 }
 
 // LoadProxyConfig loads the proxy pool configuration from proxies.json
@@ -34,7 +33,6 @@ func LoadProxyConfig(dataDir string) (*ProxyPoolConfig, error) {
 			ForKiro:             true,
 			ForCodeBuddy:        true,
 			ForWavespeed:        false,
-			ForYepAPI:           false,
 			ForCodex:            false,
 			ForLogin:            false,
 			AutoTestEnabled:     false,
@@ -58,13 +56,12 @@ func LoadProxyConfig(dataDir string) (*ProxyPoolConfig, error) {
 	// Apply global routing flags to individual proxies if not set
 	for i := range config.Proxies {
 		if !config.Proxies[i].ForKiro && !config.Proxies[i].ForCodeBuddy &&
-			!config.Proxies[i].ForWavespeed && !config.Proxies[i].ForYepAPI &&
+			!config.Proxies[i].ForWavespeed &&
 			!config.Proxies[i].ForCodex && !config.Proxies[i].ForLogin {
 			// If no flags are set, use global defaults
 			config.Proxies[i].ForKiro = config.ForKiro
 			config.Proxies[i].ForCodeBuddy = config.ForCodeBuddy
 			config.Proxies[i].ForWavespeed = config.ForWavespeed
-			config.Proxies[i].ForYepAPI = config.ForYepAPI
 			config.Proxies[i].ForCodex = config.ForCodex
 			config.Proxies[i].ForLogin = config.ForLogin
 		}

@@ -16,8 +16,7 @@
     { name: 'CodeBuddy', color: '#3B82F6', locked: false },
     { name: 'Wavespeed', color: '#EAB308', locked: false },
     { name: 'Canva', color: '#06B6D4', locked: false },
-    { name: 'Codex', color: '#6B7280', locked: true },
-    { name: 'YepAPI', color: '#6B7280', locked: true }
+    { name: 'Codex', color: '#6B7280', locked: false }
   ];
 
   let accountsByProvider = $derived(groupByProvider(accounts));

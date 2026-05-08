@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -26,7 +27,6 @@ type LoginResult struct {
 	CodeBuddy *ProviderCredentials `json:"codebuddy"`
 	Wavespeed *ProviderCredentials `json:"wavespeed"`
 	Canva     *ProviderCredentials `json:"canva"`
-	YepAPI    *ProviderCredentials `json:"yepapi"`
 }
 
 // ProgressEvent represents a progress update from Python script
@@ -52,7 +52,6 @@ type ResultEvent struct {
 	CodeBuddy map[string]interface{} `json:"codebuddy"`
 	Wavespeed map[string]interface{} `json:"wavespeed"`
 	Canva     map[string]interface{} `json:"canva"`
-	YepAPI    map[string]interface{} `json:"yepapi"`
 }
 
 // findAuthDir locates the auth directory with login.py
@@ -162,7 +161,6 @@ func RunLogin(email, password string) (*LoginResult, error) {
 				CodeBuddy: mapToProviderCredentials(resultEvent.CodeBuddy),
 				Wavespeed: mapToProviderCredentials(resultEvent.Wavespeed),
 				Canva:     mapToProviderCredentials(resultEvent.Canva),
-				YepAPI:    mapToProviderCredentials(resultEvent.YepAPI),
 			}
 		}
 	}
@@ -194,6 +192,7 @@ type LoginOptions struct {
 	Concurrent int
 	Priority   string
 	ProxyURL   string
+	Provider   string // If set, only login to this specific provider
 }
 
 // RunLoginWithProgress executes login with progress callbacks for real-time logging
@@ -205,13 +204,26 @@ func RunLoginWithProgress(email, password string, onProgress ProgressCallback) (
 	}, onProgress)
 }
 
-// RunLoginWithOptions executes login with full configuration
+// RunLoginWithOptions executes login with full configuration.
+// It accepts a context so the subprocess can be killed on cancellation.
 func RunLoginWithOptions(email, password string, opts LoginOptions, onProgress ProgressCallback) (*LoginResult, error) {
+	return RunLoginWithOptionsCtx(context.Background(), email, password, opts, onProgress)
+}
+
+// RunLoginWithOptionsCtx is like RunLoginWithOptions but accepts a context.
+// When the context is cancelled, the Python subprocess is killed immediately.
+func RunLoginWithOptionsCtx(ctx context.Context, email, password string, opts LoginOptions, onProgress ProgressCallback) (*LoginResult, error) {
 	authDir := findAuthDir()
 	pythonExe := findVenvPython(authDir)
 	loginScript := filepath.Join(authDir, "login.py")
 
-	cmd := exec.Command(pythonExe, loginScript, "--email", email, "--password", password)
+	args := []string{loginScript, "--email", email, "--password", password}
+	if opts.Provider != "" {
+		args = append(args, "--provider", opts.Provider)
+	}
+
+	// Use CommandContext so the subprocess is killed when ctx is cancelled
+	cmd := exec.CommandContext(ctx, pythonExe, args...)
 
 	// Set environment variables for Python script
 	cmd.Env = append(os.Environ(),
@@ -284,16 +296,23 @@ func RunLoginWithOptions(email, password string, opts LoginOptions, onProgress P
 				CodeBuddy: mapToProviderCredentials(resultEvent.CodeBuddy),
 				Wavespeed: mapToProviderCredentials(resultEvent.Wavespeed),
 				Canva:     mapToProviderCredentials(resultEvent.Canva),
-				YepAPI:    mapToProviderCredentials(resultEvent.YepAPI),
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
+		// If context was cancelled, don't treat as error
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("login cancelled")
+		}
 		return nil, fmt.Errorf("error reading subprocess output: %w", err)
 	}
 
 	if err := cmd.Wait(); err != nil {
+		// If context was cancelled, the process was killed — expected
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("login cancelled")
+		}
 		return nil, fmt.Errorf("python subprocess failed: %w", err)
 	}
 

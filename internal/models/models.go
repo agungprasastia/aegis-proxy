@@ -9,7 +9,6 @@ const (
 	ProviderCodeBuddy = "codebuddy"
 	ProviderWindsurf  = "windsurf"
 	ProviderCanva     = "canva"
-	ProviderYepAPI    = "yepapi"
 	ProviderCodex     = "codex"
 	ProviderWavespeed = "wavespeed"
 	ProviderDeepSeek  = "deepseek"

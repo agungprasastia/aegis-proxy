@@ -9,7 +9,7 @@
   let searchQuery = $state('');
   let selectedFilter = $state('All');
 
-  const filters = ['All', 'Standard', 'MAX', 'Wavespeed', 'Codex', 'YepAPI'];
+  const filters = ['All', 'Standard', 'MAX', 'Wavespeed', 'Codex'];
 
   const tierColors = {
     'Standard': 'green',
@@ -20,9 +20,7 @@
     'Wavespeed': 'blue',
     'wavespeed': 'blue',
     'Codex': 'orange',
-    'codex': 'orange',
-    'YepAPI': 'red',
-    'yepapi': 'red'
+    'codex': 'orange'
   };
 
   async function fetchModels() {

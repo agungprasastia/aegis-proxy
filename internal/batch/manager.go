@@ -41,15 +41,17 @@ type AccountInput struct {
 type BatchConfig struct {
 	Concurrent int    `json:"concurrent"`
 	Headless   bool   `json:"headless"`
-	Priority   string `json:"priority"` // which provider to prioritize
+	Priority   string `json:"priority"`  // which provider to prioritize
+	Provider   string `json:"provider"`  // if set, only login to this specific provider
+	ProxyURL   string `json:"proxy_url"` // upstream proxy for browser automation
 }
 
 // BatchManager manages batch account login jobs
 type BatchManager struct {
-	mu      sync.RWMutex
-	status  BatchStatus
-	cancel  context.CancelFunc
-	am      *accounts.AccountManager
+	mu     sync.RWMutex
+	status BatchStatus
+	cancel context.CancelFunc
+	am     *accounts.AccountManager
 }
 
 // NewBatchManager creates a new BatchManager
@@ -210,9 +212,11 @@ func (bm *BatchManager) processOneAccount(ctx context.Context, acc AccountInput,
 		Headless:   cfg.Headless,
 		Concurrent: cfg.Concurrent,
 		Priority:   cfg.Priority,
+		Provider:   cfg.Provider,
+		ProxyURL:   cfg.ProxyURL,
 	}
 
-	result, err := auth.RunLoginWithOptions(acc.Email, acc.Password, opts, func(event auth.ProgressEvent) {
+	result, err := auth.RunLoginWithOptionsCtx(ctx, acc.Email, acc.Password, opts, func(event auth.ProgressEvent) {
 		providerTag := ""
 		if event.Provider != "" {
 			providerTag = fmt.Sprintf("[%s] ", event.Provider)
@@ -240,7 +244,6 @@ func (bm *BatchManager) processOneAccount(ctx context.Context, acc AccountInput,
 		{"codebuddy", result.CodeBuddy},
 		{"wavespeed", result.Wavespeed},
 		{"canva", result.Canva},
-		{"yepapi", result.YepAPI},
 	}
 
 	for _, p := range providers {

@@ -41,7 +41,6 @@ import (
 	_ "github.com/aegis-proxy/aegis/internal/provider/wavespeed"
 	_ "github.com/aegis-proxy/aegis/internal/provider/windsurf"
 	_ "github.com/aegis-proxy/aegis/internal/provider/xai"
-	_ "github.com/aegis-proxy/aegis/internal/provider/yepapi"
 )
 
 const (
@@ -349,7 +348,6 @@ func addAccountsFromFile(am *accounts.AccountManager, filename string) {
 		processProviderCredentials(am, email, password, "codebuddy", result.CodeBuddy, &count, &failed)
 		processProviderCredentials(am, email, password, "wavespeed", result.Wavespeed, &count, &failed)
 		processProviderCredentials(am, email, password, "canva", result.Canva, &count, &failed)
-		processProviderCredentials(am, email, password, "yepapi", result.YepAPI, &count, &failed)
 	}
 
 	fmt.Printf("\n%s✓ Successfully added %d accounts%s\n", colorGreen, count, colorReset)

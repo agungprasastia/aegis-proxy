@@ -22,7 +22,6 @@
     max: 'purple',
     wavespeed: 'blue',
     codex: 'orange',
-    yepapi: 'red',
     combo: 'gray',
   };
 

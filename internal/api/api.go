@@ -450,7 +450,6 @@ func (s *APIServer) HandleGetProxyConfig(w http.ResponseWriter, r *http.Request)
 		"for_kiro":               s.poolConfig.ForKiro,
 		"for_codebuddy":          s.poolConfig.ForCodeBuddy,
 		"for_wavespeed":          s.poolConfig.ForWavespeed,
-		"for_yepapi":             s.poolConfig.ForYepAPI,
 		"for_codex":              s.poolConfig.ForCodex,
 		"for_login":              s.poolConfig.ForLogin,
 		"auto_test_enabled":      s.poolConfig.AutoTestEnabled,
@@ -469,7 +468,6 @@ func (s *APIServer) HandleUpdateProxyConfig(w http.ResponseWriter, r *http.Reque
 		ForKiro             *bool `json:"for_kiro"`
 		ForCodeBuddy        *bool `json:"for_codebuddy"`
 		ForWavespeed        *bool `json:"for_wavespeed"`
-		ForYepAPI           *bool `json:"for_yepapi"`
 		ForCodex            *bool `json:"for_codex"`
 		ForLogin            *bool `json:"for_login"`
 		AutoTestEnabled     *bool `json:"auto_test_enabled"`
@@ -491,9 +489,6 @@ func (s *APIServer) HandleUpdateProxyConfig(w http.ResponseWriter, r *http.Reque
 	if req.ForWavespeed != nil {
 		s.poolConfig.ForWavespeed = *req.ForWavespeed
 	}
-	if req.ForYepAPI != nil {
-		s.poolConfig.ForYepAPI = *req.ForYepAPI
-	}
 	if req.ForCodex != nil {
 		s.poolConfig.ForCodex = *req.ForCodex
 	}
@@ -514,7 +509,6 @@ func (s *APIServer) HandleUpdateProxyConfig(w http.ResponseWriter, r *http.Reque
 		s.poolConfig.ForKiro,
 		s.poolConfig.ForCodeBuddy,
 		s.poolConfig.ForWavespeed,
-		s.poolConfig.ForYepAPI,
 		s.poolConfig.ForCodex,
 		s.poolConfig.ForLogin,
 	)
@@ -561,7 +555,6 @@ func (s *APIServer) HandleAddProxy(w http.ResponseWriter, r *http.Request) {
 		ForKiro:      s.poolConfig.ForKiro,
 		ForCodeBuddy: s.poolConfig.ForCodeBuddy,
 		ForWavespeed: s.poolConfig.ForWavespeed,
-		ForYepAPI:    s.poolConfig.ForYepAPI,
 		ForCodex:     s.poolConfig.ForCodex,
 		ForLogin:     s.poolConfig.ForLogin,
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -11,17 +12,16 @@ import (
 // ProxyEntry represents a single proxy in the pool
 type ProxyEntry struct {
 	URL          string    `json:"url"`
-	Type         string    `json:"type"`           // "http" or "socks5"
+	Type         string    `json:"type"` // "http" or "socks5"
 	Host         string    `json:"host"`
 	Port         string    `json:"port"`
 	Region       string    `json:"region"`
-	Status       string    `json:"status"`         // "ok" or "failed"
+	Status       string    `json:"status"` // "ok" or "failed"
 	LatencyMs    int       `json:"latency_ms"`
 	LastChecked  time.Time `json:"last_checked"`
 	ForKiro      bool      `json:"for_kiro"`
 	ForCodeBuddy bool      `json:"for_codebuddy"`
 	ForWavespeed bool      `json:"for_wavespeed"`
-	ForYepAPI    bool      `json:"for_yepapi"`
 	ForCodex     bool      `json:"for_codex"`
 	ForLogin     bool      `json:"for_login"`
 }
@@ -50,7 +50,7 @@ func (p *ProxyPool) GetProxy(provider string) *ProxyEntry {
 
 	for i := range p.proxies {
 		proxy := &p.proxies[i]
-		
+
 		// Skip failed proxies
 		if proxy.Status != "ok" {
 			continue
@@ -80,8 +80,6 @@ func (p *ProxyPool) isProxyEnabledForProvider(proxy *ProxyEntry, provider string
 		return proxy.ForCodeBuddy
 	case "wavespeed":
 		return proxy.ForWavespeed
-	case "yepapi":
-		return proxy.ForYepAPI
 	case "codex":
 		return proxy.ForCodex
 	case "login":
@@ -144,6 +142,42 @@ func (p *ProxyPool) UpdateProxy(proxyURL string, status string, latencyMs int) {
 			p.proxies[i].LastChecked = time.Now()
 			return
 		}
+	}
+}
+
+// ApplyRoutingFlags updates provider-routing flags for all proxies in the pool.
+func (p *ProxyPool) ApplyRoutingFlags(forKiro, forCodeBuddy, forWavespeed, forCodex, forLogin bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for i := range p.proxies {
+		p.proxies[i].ForKiro = forKiro
+		p.proxies[i].ForCodeBuddy = forCodeBuddy
+		p.proxies[i].ForWavespeed = forWavespeed
+		p.proxies[i].ForCodex = forCodex
+		p.proxies[i].ForLogin = forLogin
+	}
+}
+
+// NormalizeEntry fills derived proxy fields from the URL when possible.
+func NormalizeEntry(entry *ProxyEntry) {
+	if entry == nil || entry.URL == "" {
+		return
+	}
+
+	parsed, err := url.Parse(entry.URL)
+	if err != nil {
+		return
+	}
+
+	if entry.Type == "" {
+		entry.Type = strings.ToUpper(parsed.Scheme)
+	}
+	if entry.Host == "" {
+		entry.Host = parsed.Hostname()
+	}
+	if entry.Port == "" {
+		entry.Port = parsed.Port()
 	}
 }
 
